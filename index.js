@@ -2,9 +2,10 @@ const readline = require("readline");
 const Timer = require("./Timer");
 const { millisecondsToPrettyDuration } = require("./timeUtils");
 
-console.log("Press r to reset current timer");
-console.log("Press n to create a new timer");
-console.log("Press any other key to pause current timer");
+console.log("Press r to reset current timer.");
+console.log("Press n to create a new timer.");
+console.log("Press any other key to pause current timer.");
+console.log("Press ctrl+c to exit.");
 console.log();
 
 const timer = new Timer();
