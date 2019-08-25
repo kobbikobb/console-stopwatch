@@ -29,8 +29,12 @@ class Timer {
   }
 
   reset() {
+    const wasRunning = this.current !== null;
     this.intervals = [];
     this.current = null;
+    if (wasRunning) {
+      this.start();
+    }
   }
 
   getMilliseconds(targetDate = new Date()) {
