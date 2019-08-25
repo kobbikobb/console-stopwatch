@@ -1,0 +1,14 @@
+{
+  "name": "console-stopwatch",
+  "version": "1.0.0",
+  "description": "A console stopwatch",
+  "main": "index.js",
+  "scripts": {
+    "test": "jest"
+  },
+  "author": "kobbikobb",
+  "license": "ISC",
+  "devDependencies": {
+    "jest": "^24.9.0"
+  }
+}
