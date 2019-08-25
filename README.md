@@ -1,4 +1,4 @@
-https://travis-ci.com/kobbikobb/console-stopwatch.svg?branch=master
+[![Build status](https://travis-ci.com/kobbikobb/console-stopwatch.svg?branch=master)]
 
 # console-stopwatch
 Simple stopwatch for the console (terminal)
