@@ -2,7 +2,10 @@ const readline = require("readline");
 const Timer = require("./Timer");
 const { millisecondsToPrettyDuration } = require("./timeUtils");
 
-console.log("(Press r to reset, press any other key to stop)");
+console.log("Press r to reset current timer");
+console.log("Press n to create a new timer");
+console.log("Press any other key to pause current timer");
+console.log();
 
 const timer = new Timer();
 timer.start();
@@ -26,6 +29,14 @@ process.stdin.on("keypress", (str, key) => {
   } else {
     if (key.name === "r") {
       timer.reset();
+    } else if (key.name === "n") {
+      const wasRunnig = timer.isRunning();
+      timer.stop();
+      console.log();
+      timer.reset();
+      if (wasRunnig) {
+        timer.start();
+      }
     } else {
       timer.toggle();
     }

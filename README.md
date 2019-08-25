@@ -8,5 +8,6 @@ Simple stopwatch for the console (terminal)
 Run stopwatch by with: 
 `npm run start` or `node index.js` (a timer automatically starts)
 
-Press r to reset timer
-Press any other key to pause timer
+Press r to reset current timer
+Press n to create a new timer
+Press any other key to pause current timer

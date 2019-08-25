@@ -28,8 +28,12 @@ class Timer {
     }
   }
 
+  isRunning() {
+    return this.current !== null;
+  }
+
   reset() {
-    const wasRunning = this.current !== null;
+    const wasRunning = this.isRunning();
     this.intervals = [];
     this.current = null;
     if (wasRunning) {
