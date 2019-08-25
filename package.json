@@ -1,14 +1,15 @@
 {
   "name": "console-stopwatch",
   "version": "1.0.0",
-  "description": "A console stopwatch",
+  "description": "A simple console stopwatch",
   "main": "index.js",
   "scripts": {
     "test": "jest",
     "test:watch": "jest --watch",
     "start": "node index.js"
   },
-  "author": "kobbikobb",
+  "author": "Jakob Jónasson <jakob.jonasson@gmail.com> (https://github.com/kobbikobb)",
+  "homepage": "https://github.com/kobbikobb/console-stopwatch",
   "license": "ISC",
   "devDependencies": {
     "jest": "^24.9.0"
