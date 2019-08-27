@@ -9,7 +9,7 @@ Simple stopwatch for the console.
 
 ## Instructions
 
-- Press r to reset current timer.
-- Press n to create a new timer.
-- Press any other key to pause current timer.
-- Press ctrl+c to exit.
+- Press `r` to reset current timer.
+- Press `n` to create a new timer.
+- Press `any` other key to pause current timer.
+- Press `ctrl+c` to exit.
