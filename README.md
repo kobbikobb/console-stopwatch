@@ -5,7 +5,7 @@ Simple stopwatch for the console.
 
 ## Install & run in console
 - Install globally with `npm i console-stopwatch --global`
-- Run `stopwatch` in terminal.
+- Run `stopwatch` in console.
 
 ## Instructions
 
