@@ -18,7 +18,7 @@ class Timers {
     const timer = new Timer();
     this.timers.push(timer);
     this.index = this.timers.length - 1;
-    console.log(); // To add a line for the timer to be displayd
+    console.log(''); // To add a line for the timer to be displayd
     return timer;
   }
 
