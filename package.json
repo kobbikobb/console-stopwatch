@@ -18,7 +18,7 @@
   "scripts": {
     "test": "jest",
     "test:watch": "jest --watch",
-    "start": "node index.js"
+    "start": "node src/index.js"
   },
   "author": "Jakob Jónasson <jakob.jonasson@gmail.com> (https://github.com/kobbikobb)",
   "homepage": "https://github.com/kobbikobb/console-stopwatch",
