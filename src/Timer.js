@@ -1,4 +1,4 @@
-class Timer {
+export class Timer {
   constructor() {
     this.intervals = [];
     this.current = null;
@@ -50,5 +50,3 @@ class Timer {
     return milliseconds;
   }
 }
-
-module.exports = Timer;

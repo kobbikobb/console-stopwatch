@@ -1,6 +1,6 @@
-const Timer = require("./Timer");
+import {Timer} from "./Timer";
 
-class Timers {
+export class Timers {
   constructor() {
     this.timers = [new Timer()];
     this.index = 0;
@@ -65,4 +65,3 @@ class Timers {
   }
 }
 
-module.exports = Timers;
