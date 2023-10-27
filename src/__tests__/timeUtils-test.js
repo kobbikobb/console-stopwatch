@@ -1,4 +1,4 @@
-const { millisecondsToPrettyDuration } = require("../timeUtils");
+import { millisecondsToPrettyDuration } from "../timeUtils";
 
 describe("timeUtils", () => {
   it("should format ten milliseconds", () => {

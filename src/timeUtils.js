@@ -2,7 +2,7 @@ function formatNumber(number) {
   return number.toString().padStart(2, "0");
 }
 
-function millisecondsToPrettyDuration(totalMilliseconds) {
+export function millisecondsToPrettyDuration(totalMilliseconds) {
   const milliseconds = parseInt((totalMilliseconds % 1000) / 10);
   const seconds = parseInt(totalMilliseconds / 1000) % 60;
   const minutes = parseInt(totalMilliseconds / 1000 / 60) % 60;
@@ -12,7 +12,3 @@ function millisecondsToPrettyDuration(totalMilliseconds) {
     seconds
   )}.${formatNumber(milliseconds)}`;
 }
-
-module.exports = {
-  millisecondsToPrettyDuration
-};

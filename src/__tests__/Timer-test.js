@@ -1,4 +1,4 @@
-const Timer = require("../Timer");
+import {Timer} from "../Timer";
 
 describe("Timer", () => {
   it("should be 0 milliseconds when never started", () => {

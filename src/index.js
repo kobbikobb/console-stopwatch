@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
-const readline = require("readline");
-const Timers = require("./Timers");
-const { millisecondsToPrettyDuration } = require("./timeUtils");
+import readline from "readline";
+import {Timers} from"./Timers";
+import { millisecondsToPrettyDuration } from "./timeUtils";
 
 console.log("Press r to reset current timer.");
 console.log("Press n to create a new timer.");

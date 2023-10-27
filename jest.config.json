@@ -1,5 +1,6 @@
 {
-    "transform": {
-      "^.+\\.js$": "babel-jest"
-    }
+  "roots": ["src"],
+  "transform": {
+    "^.+\\.js$": "babel-jest"
+  }
 }
