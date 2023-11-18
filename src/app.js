@@ -16,7 +16,7 @@ export function run() {
     process.stdin.setRawMode(true);
 
     function replaceLine(line) {
-        process.stdout.clearLine();
+        process.stdout.clearLine(0);
         process.stdout.cursorTo(0);
         process.stdout.write(line);
     }

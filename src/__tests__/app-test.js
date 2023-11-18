@@ -7,13 +7,12 @@ describe('app run', () => {
     const clearLine = jest.fn();
     const cursorTo = jest.fn();
     const write = jest.fn();
-    const exit = jest.fn();
 
     process.stdin.setRawMode = setRawMode;
     process.stdout.clearLine = clearLine;
     process.stdout.cursorTo = cursorTo;
     process.stdout.write = write;
-    process.exit = exit;
+    const exit = jest.spyOn(process, 'exit').mockImplementation();
 
     beforeEach(() => {
         jest.useFakeTimers();

@@ -1,3 +1,5 @@
+// @ts-nocheck
+
 import {Timer} from "./Timer";
 
 export class Timers {

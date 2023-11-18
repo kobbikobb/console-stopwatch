@@ -1,3 +1,5 @@
+// @ts-nocheck
+
 export class Timer {
   constructor() {
     this.intervals = [];

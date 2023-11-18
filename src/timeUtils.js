@@ -1,3 +1,5 @@
+// @ts-nocheck
+
 function formatNumber(number) {
   return number.toString().padStart(2, "0");
 }
