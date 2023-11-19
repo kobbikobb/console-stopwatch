@@ -1,6 +1,8 @@
 {
   "roots": ["src"],
   "transform": {
-    "^.+\\.js$": "babel-jest"
-  }
+    "^.+\\.[tj]s?$": ["ts-jest"]
+  },
+  "preset": "ts-jest",
+  "testEnvironment": "node"
 }
