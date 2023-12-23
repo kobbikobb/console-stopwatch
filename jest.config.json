@@ -1,7 +1,7 @@
 {
   "roots": ["src"],
   "transform": {
-    "^.+\\.[tj]s?$": ["ts-jest"]
+    "^.+\\ts?$": ["ts-jest"]
   },
   "preset": "ts-jest",
   "testEnvironment": "node"
