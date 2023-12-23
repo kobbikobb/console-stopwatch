@@ -1,6 +1,10 @@
 import {Timer} from "./Timer";
 
 export class Timers {
+ 
+  private timers: Timer[];
+  private index: number;
+
   constructor() {
     this.timers = [new Timer()];
     this.index = 0;

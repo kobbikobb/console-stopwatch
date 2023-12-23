@@ -15,8 +15,8 @@ export function run() {
     readline.emitKeypressEvents(process.stdin);
     process.stdin.setRawMode(true);
 
-    function replaceLine(line) {
-        process.stdout.clearLine();
+    function replaceLine(line: string) {
+        process.stdout.clearLine(0);
         process.stdout.cursorTo(0);
         process.stdout.write(line);
     }

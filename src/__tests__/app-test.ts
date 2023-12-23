@@ -2,7 +2,8 @@ import {run} from '../app';
 
 describe('app run', () => {
 
-    const consoleSpy = jest.spyOn(console,'log').mockImplementation(() => {});
+    const consoleSpy = jest.spyOn(console,'log').mockImplementation();
+    const exitSpy = jest.spyOn(process,'exit').mockImplementation();
     const setRawMode = jest.fn();
     const clearLine = jest.fn();
     const cursorTo = jest.fn();
@@ -13,7 +14,6 @@ describe('app run', () => {
     process.stdout.clearLine = clearLine;
     process.stdout.cursorTo = cursorTo;
     process.stdout.write = write;
-    process.exit = exit;
 
     beforeEach(() => {
         jest.useFakeTimers();
@@ -89,6 +89,6 @@ describe('app run', () => {
         run();
         process.stdin.emit('data', Buffer.from('\x03'));
 
-        expect(exit).toHaveBeenCalledWith();
+        expect(exitSpy).toHaveBeenCalledWith();
     });
 });
