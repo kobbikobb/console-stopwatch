@@ -1,4 +1,13 @@
+type Interval =  {
+  started: Date;
+  ended: Date | null;
+};
+
 export class Timer {
+
+  private intervals: Interval[];
+  private current: Interval | null;
+
   constructor() {
     this.intervals = [];
     this.current = null;
@@ -45,7 +54,7 @@ export class Timer {
     let milliseconds = 0;
     for (let i = 0; i < this.intervals.length; i++) {
       const interval = this.intervals[i];
-      milliseconds += (interval.ended || targetDate) - interval.started;
+      milliseconds += (interval.ended?.getTime() || targetDate.getTime()) - interval.started.getTime();
     }
     return milliseconds;
   }

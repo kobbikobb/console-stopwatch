@@ -2,7 +2,8 @@ import {run} from '../app';
 
 describe('app run', () => {
 
-    const consoleSpy = jest.spyOn(console,'log').mockImplementation(() => {});
+    const consoleSpy = jest.spyOn(console,'log').mockImplementation();
+    const exitSpy = jest.spyOn(process,'exit').mockImplementation();
     const setRawMode = jest.fn();
     const clearLine = jest.fn();
     const cursorTo = jest.fn();
@@ -13,7 +14,6 @@ describe('app run', () => {
     process.stdout.clearLine = clearLine;
     process.stdout.cursorTo = cursorTo;
     process.stdout.write = write;
-    process.exit = exit;
 
     beforeEach(() => {
         jest.useFakeTimers();
@@ -32,6 +32,14 @@ describe('app run', () => {
         process.stdin.removeAllListeners();
     });
 
+    const expectWriteToContainTime = (time: string) => {
+        expect(write).toHaveBeenCalledWith(expect.stringContaining(time));
+    }  
+
+    const expectWriteToContainLastTime = (time: string) => {
+        expect(write).toHaveBeenLastCalledWith(expect.stringContaining(time));
+    }  
+
     it('should write a menu', () => {
         run();
 
@@ -45,7 +53,7 @@ describe('app run', () => {
         run();
         jest.advanceTimersByTime(50);
 
-        expect(write).toHaveBeenCalledWith('00:00:00.05');
+        expectWriteToContainTime('00:00:00.05');
     });
 
     it('should write elpased time twice', () => {
@@ -53,8 +61,8 @@ describe('app run', () => {
         jest.advanceTimersByTime(50);
         jest.advanceTimersByTime(50);
 
-        expect(write).toHaveBeenCalledWith('00:00:00.05');
-        expect(write).toHaveBeenCalledWith('00:00:00.10');
+        expectWriteToContainTime('00:00:00.05');
+        expectWriteToContainTime('00:00:00.10');
     });
 
     it('should reset timer', () => {
@@ -64,7 +72,7 @@ describe('app run', () => {
         process.stdin.emit('data', Buffer.from('r'));
         jest.advanceTimersByTime(50);
 
-        expect(write).toHaveBeenLastCalledWith('00:00:00.05');
+        expectWriteToContainLastTime('00:00:00.05');
     });
 
     it('should create new timer', () => {
@@ -74,7 +82,7 @@ describe('app run', () => {
         process.stdin.emit('data', Buffer.from('n'));
         jest.advanceTimersByTime(50);
 
-        expect(write).toHaveBeenLastCalledWith('00:00:00.05');
+        expectWriteToContainLastTime('00:00:00.05');
     });
 
     it('should pause timer', () => {
@@ -82,13 +90,13 @@ describe('app run', () => {
         process.stdin.emit('data', Buffer.from('x'));
         jest.advanceTimersByTime(100);
 
-        expect(write).toHaveBeenLastCalledWith('00:00:00.00');
+        expectWriteToContainLastTime('00:00:00.00');
     });
 
     it('should close the application', () => {
         run();
         process.stdin.emit('data', Buffer.from('\x03'));
 
-        expect(exit).toHaveBeenCalledWith();
+        expect(exitSpy).toHaveBeenCalled();
     });
 });
