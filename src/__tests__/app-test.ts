@@ -56,6 +56,14 @@ describe('app run', () => {
         expectWriteToContainTime('00:00:00.05');
     });
 
+    it('should write elpased time with color', () => {
+        run();
+        jest.advanceTimersByTime(50);
+        
+        expect(write).toHaveBeenCalledWith("\x1b[32m00:00:00.05\x1b[0m");
+    });
+
+
     it('should write elpased time twice', () => {
         run();
         jest.advanceTimersByTime(50);
