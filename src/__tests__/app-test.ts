@@ -1,9 +1,8 @@
-import {run} from '../app';
+import { run } from '../app';
 
 describe('app run', () => {
-
-    const consoleSpy = jest.spyOn(console,'log').mockImplementation();
-    const exitSpy = jest.spyOn(process,'exit').mockImplementation();
+    const consoleSpy = jest.spyOn(console, 'log').mockImplementation();
+    const exitSpy = jest.spyOn(process, 'exit').mockImplementation();
     const setRawMode = jest.fn();
     const clearLine = jest.fn();
     const cursorTo = jest.fn();
@@ -34,18 +33,24 @@ describe('app run', () => {
 
     const expectWriteToContainTime = (time: string) => {
         expect(write).toHaveBeenCalledWith(expect.stringContaining(time));
-    }  
+    };
 
     const expectWriteToContainLastTime = (time: string) => {
         expect(write).toHaveBeenLastCalledWith(expect.stringContaining(time));
-    }  
+    };
 
     it('should write a menu', () => {
         run();
 
-        expect(consoleSpy).toHaveBeenCalledWith('Press r to reset current timer.');
-        expect(consoleSpy).toHaveBeenCalledWith('Press n to create a new timer.');
-        expect(consoleSpy).toHaveBeenCalledWith('Press any other key to pause current timer.');
+        expect(consoleSpy).toHaveBeenCalledWith(
+            'Press r to reset current timer.',
+        );
+        expect(consoleSpy).toHaveBeenCalledWith(
+            'Press n to create a new timer.',
+        );
+        expect(consoleSpy).toHaveBeenCalledWith(
+            'Press any other key to pause current timer.',
+        );
         expect(consoleSpy).toHaveBeenCalledWith('Press ctrl+c to exit.');
     });
 
@@ -59,10 +64,9 @@ describe('app run', () => {
     it('should write elpased time with color', () => {
         run();
         jest.advanceTimersByTime(50);
-        
-        expect(write).toHaveBeenCalledWith("\x1b[32m00:00:00.05\x1b[0m");
-    });
 
+        expect(write).toHaveBeenCalledWith('\x1b[32m00:00:00.05\x1b[0m');
+    });
 
     it('should write elpased time twice', () => {
         run();
