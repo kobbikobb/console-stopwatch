@@ -9,6 +9,6 @@ export function millisecondsToPrettyDuration(totalMilliseconds: number) {
   const hours = Math.floor(totalMilliseconds / 1000 / 60 / 60);
 
   return `${formatNumber(hours)}:${formatNumber(minutes)}:${formatNumber(
-    seconds
+    seconds,
   )}.${formatNumber(milliseconds)}`;
 }

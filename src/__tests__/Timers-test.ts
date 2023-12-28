@@ -1,4 +1,4 @@
-import {Timers} from "../Timers";
+import { Timers } from "../Timers";
 
 describe("Timers", () => {
   it("should get one timer by default", () => {

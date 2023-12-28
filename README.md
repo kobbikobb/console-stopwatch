@@ -1,9 +1,11 @@
 ![Build status](https://travis-ci.com/kobbikobb/console-stopwatch.svg?branch=master)
 
 # console-stopwatch
+
 Simple stopwatch for the console.
 
 ## Install & run in console
+
 - Install globally with `npm i console-stopwatch --global`
 - Run `stopwatch` in console.
 
