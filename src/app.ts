@@ -1,5 +1,5 @@
 import readline from "readline";
-import {Timers} from"./Timers";
+import { Timers } from "./Timers";
 import { millisecondsToPrettyDuration } from "./timeUtils";
 
 export function run() {
