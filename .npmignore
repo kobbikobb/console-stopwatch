@@ -1,0 +1,5 @@
+# Exclude everything
+*
+
+# Include the dist folder
+!/dist/
