@@ -1,6 +1,6 @@
 {
     "name": "console-stopwatch",
-    "version": "1.0.9",
+    "version": "1.0.10",
     "description": "A simple console stopwatch",
     "main": "index.js",
     "bin": {
