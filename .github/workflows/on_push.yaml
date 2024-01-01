@@ -1,4 +1,4 @@
-name: On Pull Request
+name: On Push
 
 on:
   push:
@@ -16,12 +16,16 @@ jobs:
           fetch-depth: 0
 
       - name: Set up Node.js
-        uses: actions/setup-node@v2
+        uses: actions/setup-node@v3
         with:
           node-version: 18
+          registry-url: "https://registry.npmjs.org"
 
       - name: Install dependencies
         run: npm install
+
+      - name: Build
+        run: npm run build
 
       - name: Set version changed
         id: set-version-changed
@@ -31,11 +35,14 @@ jobs:
 
           if [ "$current_version" != "$last_version" ]; then
             echo "VERSION_CHANGED=true" >> $GITHUB_ENV
+            echo "Version changed!"
           else
             echo "VERSION_CHANGED=false" >> $GITHUB_ENV
+            echo "Version NOT changed"
           fi
 
-          echo "VERSION_CHANGED=$GITHUB_ENV"
+          echo "Version changed: "
+          echo ${{ env.VERSION_CHANGED }}
 
       - name: Publish to npm
         run: npm publish
