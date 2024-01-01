@@ -12,6 +12,8 @@ jobs:
     steps:
       - name: Checkout the code
         uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
 
       - name: Set up Node.js
         uses: actions/setup-node@v2
@@ -20,6 +22,25 @@ jobs:
 
       - name: Install dependencies
         run: npm install
+
+      - name: Set version changed
+        id: set-version-changed
+        run: |
+          current_version=$(git show HEAD:package.json | grep '"version"' | cut -d'"' -f4)
+          last_version=$(git describe --tags --abbrev=0 | sed 's/v//')
+
+          echo $current_version
+          echo $last_version
+
+          if [ "$current_version" != "$last_version" ]; then
+            echo "Version number has changed in the pull request."
+            echo "VERSION_CHANGED=true" >> $GITHUB_ENV
+          else
+            echo "Version number has not changed in the pull request."
+            echo "VERSION_CHANGED=false" >> $GITHUB_ENV
+          fi
+
+          echo $GITHUB_ENV
 
       - name: Run lint
         run: npm run lint
@@ -33,10 +54,11 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     needs: build
+
     if: |
       github.ref == 'refs/heads/master' &&
-      github.event_name == 'push' &&
-      steps.version.outputs.changed == 'true'
+      github.event_name == 'push'
+
     steps:
       - name: Checkout the code
         uses: actions/checkout@v2
