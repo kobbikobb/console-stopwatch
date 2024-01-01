@@ -6,6 +6,11 @@
     "bin": {
         "stopwatch": "dist/index.js"
     },
+    "files": [
+      "dist",
+      "README.md",
+      "LICENSE"
+    ],
     "preferGlobal": true,
     "publishConfig": {
         "access": "public"
