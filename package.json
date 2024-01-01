@@ -1,11 +1,16 @@
 {
     "name": "console-stopwatch",
-    "version": "1.0.6",
+    "version": "1.0.7",
     "description": "A simple console stopwatch",
     "main": "index.js",
     "bin": {
         "stopwatch": "dist/index.js"
     },
+    "files": [
+        "dist",
+        "README.md",
+        "LICENSE"
+    ],
     "preferGlobal": true,
     "publishConfig": {
         "access": "public"
