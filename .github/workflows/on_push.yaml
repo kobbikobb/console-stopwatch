@@ -1,0 +1,43 @@
+name: On Pull Request
+
+on:
+  push:
+    branches:
+      - master
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout the code
+        uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v2
+        with:
+          node-version: 18
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Set version changed
+        id: set-version-changed
+        run: |
+          current_version=$(git show HEAD:package.json | grep '"version"' | cut -d'"' -f4)
+          last_version=$(git describe --tags --abbrev=0 | sed 's/v//')
+
+          if [ "$current_version" != "$last_version" ]; then
+            echo "VERSION_CHANGED=true" >> $GITHUB_ENV
+          else
+            echo "VERSION_CHANGED=false" >> $GITHUB_ENV
+          fi
+
+          echo "VERSION_CHANGED=$GITHUB_ENV"
+
+      - name: Publish to npm
+        run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_AUTH_TOKEN }}
