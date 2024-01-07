@@ -16,14 +16,6 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Release
-        uses: justincy/github-action-npm-release@2.0.2
-        id: release
-
-      - name: Print release output
-        if: ${{ steps.release.outputs.released == 'true' }}
-        run: echo Release ID ${{ steps.release.outputs.release_id }}
-
       - name: Set up Node.js
         uses: actions/setup-node@v3
         with:
@@ -36,7 +28,12 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Release
+        uses: justincy/github-action-npm-release@2.0.2
+        id: release
+
       - name: Publish to npm
+        if: ${{ steps.release.outputs.released == 'true' }}
         run: npm publish
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_AUTH_TOKEN }}
