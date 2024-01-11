@@ -65,7 +65,7 @@ describe("app run", () => {
         run();
         jest.advanceTimersByTime(50);
 
-        expect(write).toHaveBeenCalledWith("\x1b[32m00:00:00.05\x1b[0m");
+        expect(write).toHaveBeenCalledWith("\x1b[31m00:00:00.05\x1b[0m");
     });
 
     it("should write elpased time twice", () => {
