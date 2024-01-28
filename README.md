@@ -1,4 +1,4 @@
-[![Build Status](https://github.com/kobbikobb/console-stopwatch/workflows/Your-Workflow-Name/badge.svg)](https://github.com/your-username/your-repository/actions)
+[![Build Status](https://github.com/kobbikobb/console-stopwatch/workflows/on_push/badge.svg)](https://github.com/kobbikobb/console-stopwatch/actions)
 
 # console-stopwatch
 
