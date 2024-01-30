@@ -19,6 +19,8 @@ describe("app run", () => {
     });
 
     afterEach(() => {
+        consoleSpy.mockReset();
+        exitSpy.mockReset();
         setRawMode.mockReset();
         clearLine.mockReset();
         cursorTo.mockReset();
@@ -51,7 +53,9 @@ describe("app run", () => {
         expect(consoleSpy).toHaveBeenCalledWith(
             "Press any other key to pause current timer.",
         );
-        expect(consoleSpy).toHaveBeenCalledWith("Press ctrl+c to exit.");
+        expect(consoleSpy).toHaveBeenCalledWith(
+            "Press ctrl+c or escape to exit.",
+        );
     });
 
     it("should write elpased time", () => {
@@ -105,9 +109,16 @@ describe("app run", () => {
         expectWriteToContainLastTime("00:00:00.00");
     });
 
-    it("should close the application", () => {
+    it("should close the application when pressing ctrl+c", () => {
         run();
         process.stdin.emit("data", Buffer.from("\x03"));
+
+        expect(exitSpy).toHaveBeenCalled();
+    });
+
+    it("should close the application when pressing esc", () => {
+        run();
+        process.stdin.emit("keypress", "", { name: "escape" });
 
         expect(exitSpy).toHaveBeenCalled();
     });
