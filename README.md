@@ -2,7 +2,7 @@
 
 # console-stopwatch
 
-Simple stopwatch for the console.
+Simple stopwatch for the console. Simple and quick 🚀
 
 ## Install & run in console
 
