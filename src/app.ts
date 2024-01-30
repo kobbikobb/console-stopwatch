@@ -18,7 +18,7 @@ export function run() {
     function replaceLine(line: string) {
         process.stdout.clearLine(0);
         process.stdout.cursorTo(0);
-        process.stdout.write(`\x1b[31m${line}\x1b[0m`);
+        process.stdout.write(`\x1b[38;5;214m${line}\x1b[0m`);
     }
 
     setInterval(() => {
