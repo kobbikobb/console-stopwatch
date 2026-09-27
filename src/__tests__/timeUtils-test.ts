@@ -1,4 +1,7 @@
-import { millisecondsToPrettyDuration } from "../timeUtils";
+import {
+    millisecondsToClock,
+    millisecondsToPrettyDuration,
+} from "../timeUtils";
 
 describe("timeUtils", () => {
     it("should format ten milliseconds", () => {
@@ -53,5 +56,21 @@ describe("timeUtils", () => {
         const milliseconds = 60 * 60 * 1000 * 1000;
         const result = millisecondsToPrettyDuration(milliseconds);
         expect(result).toBe("1000:00:00.00");
+    });
+});
+
+describe("millisecondsToClock", () => {
+    it("should drop the hundredths", () => {
+        expect(millisecondsToClock(10)).toBe("00:00:00");
+    });
+
+    it("should keep the hours, minutes and seconds", () => {
+        expect(millisecondsToClock(60 * 60 * 1000 + 61 * 1000 + 500)).toBe(
+            "01:01:01",
+        );
+    });
+
+    it("should keep three digits of hours", () => {
+        expect(millisecondsToClock(100 * 60 * 60 * 1000)).toBe("100:00:00");
     });
 });

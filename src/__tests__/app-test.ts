@@ -1,21 +1,125 @@
 import { run } from "../app";
 
 describe("app run", () => {
-    const consoleSpy = jest.spyOn(console, "log").mockImplementation();
+    const consoleSpy = jest.spyOn(console, "log");
     const exitSpy = jest.spyOn(process, "exit").mockImplementation();
     const setRawMode = jest.fn();
     const clearLine = jest.fn();
     const cursorTo = jest.fn();
     const write = jest.fn();
-    const exit = jest.fn();
 
     process.stdin.setRawMode = setRawMode;
     process.stdout.clearLine = clearLine;
     process.stdout.cursorTo = cursorTo;
     process.stdout.write = write;
 
+    const originalTerm = process.env.TERM;
+    const originalColumns = process.stdout.columns;
+    const originalRows = process.stdout.rows;
+    const originalIsTTY = process.stdout.isTTY;
+
+    // A terminal that keeps track of where the cursor is, so a redraw can be
+    // checked by where the next write lands rather than by what was written.
+    const fakeTerminal = () => {
+        const terminal = {
+            row: 0,
+            column: 0,
+            writeStarts: [] as { row: number; column: number }[],
+            // Resizing replaces the cursor functions, so a test that resizes
+            // has to put the model back afterwards.
+            attach: () => {
+                process.stdout.cursorTo = ((x: number) => {
+                    terminal.column = Math.max(0, x);
+                }) as typeof process.stdout.cursorTo;
+                process.stdout.moveCursor = ((x: number, y: number) => {
+                    terminal.column = Math.max(0, terminal.column + x);
+                    terminal.row = Math.max(0, terminal.row + y);
+                    return true;
+                }) as typeof process.stdout.moveCursor;
+                process.stdout.clearScreenDown =
+                    (() => {}) as typeof process.stdout.clearScreenDown;
+            },
+        };
+        terminal.attach();
+        const realWrite = write.getMockImplementation();
+        write.mockImplementation((chunk: unknown) => {
+            const text = String(chunk);
+            terminal.writeStarts.push({
+                row: terminal.row,
+                column: terminal.column,
+            });
+            for (let index = 0; index < text.length; index++) {
+                const character = text[index];
+                // Step over the escape sequences: CSI ends on a letter, OSC on
+                // BEL. Neither covers a visible column.
+                if (character === "\x1b") {
+                    const isOsc = text[index + 1] === "]";
+                    let end = index + 2;
+                    while (
+                        end < text.length &&
+                        !(isOsc
+                            ? text[end] === "\x07"
+                            : /[a-zA-Z]/.test(text[end]))
+                    ) {
+                        end++;
+                    }
+                    index = end;
+                    continue;
+                }
+                if (character === "\n") {
+                    terminal.row += 1;
+                    terminal.column = 0;
+                    continue;
+                }
+                terminal.column += 1;
+            }
+            return realWrite ? realWrite(chunk) : true;
+        });
+        return terminal;
+    };
+
+    const withDigitSupport = (columns: number, rows: number) => {
+        Object.defineProperty(process.stdout, "columns", {
+            value: columns,
+            configurable: true,
+        });
+        Object.defineProperty(process.stdout, "rows", {
+            value: rows,
+            configurable: true,
+        });
+        process.stdout.moveCursor = jest.fn();
+        process.stdout.clearScreenDown = jest.fn();
+    };
+
+    const withoutDigitSupport = () => {
+        process.stdout.moveCursor = undefined as unknown as (
+            x: number,
+            y: number,
+        ) => boolean;
+        process.stdout.clearScreenDown = undefined as unknown as () => boolean;
+    };
+
+    const clearSize = () => {
+        Object.defineProperty(process.stdout, "columns", {
+            value: undefined,
+            configurable: true,
+        });
+        Object.defineProperty(process.stdout, "rows", {
+            value: undefined,
+            configurable: true,
+        });
+    };
+
     beforeEach(() => {
         jest.useFakeTimers();
+        withoutDigitSupport();
+        clearSize();
+        process.env.TERM = originalTerm;
+        // The hint line goes out through console.log, so it has to reach the
+        // fake terminal too or the cursor model cannot see the row it takes.
+        consoleSpy.mockImplementation((...args: unknown[]) => {
+            process.stdout.write(`${args.map(String).join(" ")}\n`);
+        });
     });
 
     afterEach(() => {
@@ -25,36 +129,59 @@ describe("app run", () => {
         clearLine.mockReset();
         cursorTo.mockReset();
         write.mockReset();
-        exit.mockReset();
+        // The cursor model replaces this, so put the plain mock back for the
+        // tests that do not install one.
+        process.stdout.cursorTo = cursorTo;
     });
 
     afterAll(() => {
         process.stdin.pause();
         process.stdin.removeAllListeners();
+        process.env.TERM = originalTerm;
+        Object.defineProperty(process.stdout, "columns", {
+            value: originalColumns,
+            configurable: true,
+        });
+        Object.defineProperty(process.stdout, "rows", {
+            value: originalRows,
+            configurable: true,
+        });
+        Object.defineProperty(process.stdout, "isTTY", {
+            value: originalIsTTY,
+            configurable: true,
+        });
     });
 
     const expectWriteToContainTime = (time: string) => {
         expect(write).toHaveBeenCalledWith(expect.stringContaining(time));
     };
 
-    const expectWriteToContainLastTime = (time: string) => {
+    const expectWriteToContainLastTime = (time: string | RegExp) => {
+        if (time instanceof RegExp) {
+            expect(write).toHaveBeenLastCalledWith(expect.stringMatching(time));
+            return;
+        }
         expect(write).toHaveBeenLastCalledWith(expect.stringContaining(time));
     };
 
-    it("should write a menu", () => {
+    // The block digits are made of block characters, the plain line is text, so
+    // the two are easy to tell apart without depending on the exact glyphs.
+    const expectDigits = () => expectWriteToContainLastTime("█");
+    const expectPlainLine = () =>
+        expectWriteToContainLastTime(
+            new RegExp(
+                `^${String.fromCharCode(27)}\\[38;5;214m` +
+                    `\\d{2}:\\d{2}:\\d{2}\\.\\d{2}` +
+                    `${String.fromCharCode(27)}\\[0m$`,
+            ),
+        );
+
+    it("should write a hint line", () => {
         run();
 
+        expect(consoleSpy).toHaveBeenCalledTimes(1);
         expect(consoleSpy).toHaveBeenCalledWith(
-            "Press r to reset current timer.",
-        );
-        expect(consoleSpy).toHaveBeenCalledWith(
-            "Press n to create a new timer.",
-        );
-        expect(consoleSpy).toHaveBeenCalledWith(
-            "Press any other key to pause current timer.",
-        );
-        expect(consoleSpy).toHaveBeenCalledWith(
-            "Press ctrl+c or escape to exit.",
+            expect.stringContaining("r reset"),
         );
     });
 
@@ -69,7 +196,9 @@ describe("app run", () => {
         run();
         jest.advanceTimersByTime(50);
 
-        expect(write).toHaveBeenCalledWith("\x1b[38;5;214m00:00:00.05\x1b[0m");
+        expect(write).toHaveBeenLastCalledWith(
+            "\x1b[38;5;214m00:00:00.05\x1b[0m",
+        );
     });
 
     it("should write elpased time twice", () => {
@@ -121,5 +250,263 @@ describe("app run", () => {
         process.stdin.emit("keypress", "", { name: "escape" });
 
         expect(exitSpy).toHaveBeenCalled();
+    });
+
+    it("should move between timers with the arrow keys", () => {
+        run();
+        jest.advanceTimersByTime(100);
+        // The first timer stops at 100ms and the new one starts from zero, so
+        // the two show different times and moving between them is visible.
+        process.stdin.emit("data", Buffer.from("n"));
+        jest.advanceTimersByTime(300);
+        expectWriteToContainLastTime("00:00:00.30");
+
+        process.stdin.emit("keypress", "", { name: "up" });
+        jest.advanceTimersByTime(50);
+
+        expectWriteToContainLastTime("00:00:00.10");
+    });
+
+    describe("when the terminal can draw digits", () => {
+        it("should draw the elapsed time in block digits", () => {
+            withDigitSupport(120, 40);
+            const terminal = fakeTerminal();
+            run();
+            jest.advanceTimersByTime(50);
+
+            expectDigits();
+            // The hint line took row zero, the digits take five, and the cursor
+            // parks on the row below them.
+            expect(terminal.row).toBe(6);
+        });
+
+        it("should keep the digits on the same rows every frame", () => {
+            withDigitSupport(120, 40);
+            const terminal = fakeTerminal();
+            run();
+            for (let frame = 0; frame < 5; frame++) {
+                jest.advanceTimersByTime(50);
+                const row =
+                    terminal.writeStarts[terminal.writeStarts.length - 1].row;
+                // The hint line took row zero, the digits take five, and the
+                // cursor parks on the row below them.
+                expect(row).toBe(1);
+            }
+            expect(terminal.row).toBe(6);
+        });
+
+        it("should start the first frame at the left edge", () => {
+            withDigitSupport(120, 40);
+            const terminal = fakeTerminal();
+            process.stdout.write("$ a prompt longer than ".repeat(3));
+            expect(terminal.column).toBeGreaterThan(37);
+            run();
+            jest.advanceTimersByTime(50);
+
+            expect(
+                terminal.writeStarts[terminal.writeStarts.length - 1],
+            ).toEqual({ row: 1, column: 0 });
+        });
+
+        it("should list the other timers under the digits", () => {
+            withDigitSupport(120, 40);
+            const terminal = fakeTerminal();
+            run();
+            process.stdin.emit("data", Buffer.from("n"));
+            jest.advanceTimersByTime(50);
+
+            // The timer that was replaced is stopped, so it is listed as such.
+            expectWriteToContainLastTime(/⏸.*00:00:00\.00/);
+            // One more row for the timer that was added.
+            expect(terminal.row).toBe(7);
+        });
+
+        it("should not stack up rows when the display changes", () => {
+            withDigitSupport(20, 40);
+            const terminal = fakeTerminal();
+            run();
+            jest.advanceTimersByTime(50);
+
+            for (let cycle = 0; cycle < 3; cycle++) {
+                withDigitSupport(120, 40);
+                terminal.attach();
+                terminal.writeStarts.length = 0;
+                jest.advanceTimersByTime(50);
+                expect(terminal.row).toBe(6);
+                // The plain line left the cursor at the end of the text, and
+                // moveCursor does not touch the column, so the digits have to
+                // be put back at the left edge or they start part way across.
+                expect(
+                    terminal.writeStarts[terminal.writeStarts.length - 1],
+                ).toEqual({ row: 1, column: 0 });
+
+                withDigitSupport(20, 40);
+                terminal.attach();
+                jest.advanceTimersByTime(50);
+                // The plain line ends without a newline, so the cursor is left
+                // on the row below the hint line.
+                expect(terminal.row).toBe(1);
+            }
+        });
+
+        it("should not drift when the display changes below other output", () => {
+            withDigitSupport(120, 40);
+            const terminal = fakeTerminal();
+            process.stdout.write("\n".repeat(7));
+            run();
+            // Seven rows of other output, then the hint line, so the region
+            // below it starts on row eight.
+            jest.advanceTimersByTime(50);
+            expect(terminal.row).toBe(13);
+
+            for (let cycle = 0; cycle < 3; cycle++) {
+                withDigitSupport(20, 40);
+                terminal.attach();
+                jest.advanceTimersByTime(50);
+                expect(terminal.row).toBe(8);
+
+                withDigitSupport(120, 40);
+                terminal.attach();
+                terminal.writeStarts.length = 0;
+                jest.advanceTimersByTime(50);
+                // Back on the same row, not a row higher and not a row lower.
+                expect(
+                    terminal.writeStarts[terminal.writeStarts.length - 1].row,
+                ).toBe(8);
+            }
+        });
+
+        it("should fall back to the plain line when too narrow", () => {
+            // The digits need 37 columns at zero, and 36 is one too few.
+            withDigitSupport(36, 40);
+            fakeTerminal();
+            run();
+            jest.advanceTimersByTime(50);
+
+            expectPlainLine();
+        });
+
+        it("should draw the digits at exactly the width they need", () => {
+            withDigitSupport(37, 40);
+            fakeTerminal();
+            run();
+            jest.advanceTimersByTime(50);
+
+            expectDigits();
+        });
+
+        it("should fall back to the plain line when too short", () => {
+            // Five rows of digits, the row the cursor parks on, and the hint
+            // line need seven rows. Six is one too few.
+            withDigitSupport(120, 6);
+            fakeTerminal();
+            run();
+            jest.advanceTimersByTime(50);
+
+            expectPlainLine();
+        });
+
+        it("should draw the digits at exactly the height they need", () => {
+            withDigitSupport(120, 7);
+            fakeTerminal();
+            run();
+            jest.advanceTimersByTime(50);
+
+            expectDigits();
+        });
+
+        it("should fall back on a terminal that cannot move the cursor", () => {
+            withDigitSupport(120, 40);
+            // attach() installs the model, so the support has to be taken away
+            // after it.
+            fakeTerminal();
+            withoutDigitSupport();
+            run();
+            jest.advanceTimersByTime(50);
+
+            expectPlainLine();
+        });
+
+        it("should fall back on TERM=dumb", () => {
+            withDigitSupport(120, 40);
+            process.env.TERM = "dumb";
+            fakeTerminal();
+            run();
+            jest.advanceTimersByTime(50);
+
+            expectPlainLine();
+        });
+    });
+
+    describe("when the terminal size is not known", () => {
+        it("should wait for the size and draw nothing yet", () => {
+            Object.defineProperty(process.stdout, "isTTY", {
+                value: true,
+                configurable: true,
+            });
+            withDigitSupport(120, 40);
+            clearSize();
+            const terminal = fakeTerminal();
+            run();
+            jest.advanceTimersByTime(100);
+
+            // Only the hint line, no display to guess at.
+            expect(terminal.row).toBe(1);
+        });
+
+        it("should give up waiting and write the plain line", () => {
+            Object.defineProperty(process.stdout, "isTTY", {
+                value: true,
+                configurable: true,
+            });
+            withDigitSupport(120, 40);
+            clearSize();
+            fakeTerminal();
+            run();
+            jest.advanceTimersByTime(1500);
+
+            expectPlainLine();
+        });
+
+        it("should not wait when the output is not a terminal", () => {
+            Object.defineProperty(process.stdout, "isTTY", {
+                value: false,
+                configurable: true,
+            });
+            clearSize();
+            fakeTerminal();
+            run();
+            jest.advanceTimersByTime(50);
+
+            expectPlainLine();
+        });
+    });
+
+    describe("the window title", () => {
+        it("should show the elapsed time without hundredths", () => {
+            withDigitSupport(120, 40);
+            fakeTerminal();
+            run();
+            jest.advanceTimersByTime(50);
+
+            expect(write).toHaveBeenCalledWith(
+                expect.stringContaining("⏱ 00:00:00"),
+            );
+        });
+
+        it("should only update the title once a second", () => {
+            withDigitSupport(120, 40);
+            fakeTerminal();
+            run();
+            jest.advanceTimersByTime(50);
+            const titleWrites = () =>
+                write.mock.calls.filter((call) =>
+                    String(call[0]).includes("⏱"),
+                ).length;
+            const first = titleWrites();
+
+            jest.advanceTimersByTime(10 * 50);
+            expect(titleWrites()).toBe(first);
+        });
     });
 });

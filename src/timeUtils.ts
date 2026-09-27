@@ -12,3 +12,9 @@ export function millisecondsToPrettyDuration(totalMilliseconds: number) {
         seconds,
     )}.${formatNumber(milliseconds)}`;
 }
+
+// The same time without the hundredths, which is all a window title has room
+// for.
+export function millisecondsToClock(totalMilliseconds: number) {
+    return millisecondsToPrettyDuration(totalMilliseconds).split(".")[0];
+}

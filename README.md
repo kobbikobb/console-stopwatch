@@ -14,4 +14,12 @@ Simple stopwatch for the console. Simple and quick 🚀
 -   Press `r` to reset current timer ✨
 -   Press `n` to create a new timer ✨
 -   Press `any` other key to pause current timer ✨
+-   Press `↑` or `↓` to switch between timers ✨
 -   Press `ctrl+c` or `escape` to exit ✨
+
+The elapsed time is drawn in block digits, redrawn in place, and mirrored in
+the window title. Any other timers are listed underneath, and the up and down
+arrows switch between them.
+
+If the terminal is too small for the digits, the display falls back to a single
+line of text.

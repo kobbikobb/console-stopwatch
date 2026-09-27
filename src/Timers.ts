@@ -17,11 +17,14 @@ export class Timers {
         return this.timers[this.index];
     }
 
+    getOtherTimers() {
+        return this.timers.filter((_, index) => index !== this.index);
+    }
+
     addTimer() {
         const timer = new Timer();
         this.timers.push(timer);
         this.index = this.timers.length - 1;
-        console.log(""); // To add a line for the timer to be displayd
         return timer;
     }
 
@@ -53,17 +56,17 @@ export class Timers {
         }
     }
 
+    // These only move which timer is current. The display is redrawn in place
+    // from the top, so nothing here may touch the cursor.
     moveDown() {
         if (this.index < this.timers.length - 1) {
             this.index++;
-            process.stdout.moveCursor(0, +1);
         }
     }
 
     moveUp() {
         if (this.index > 0) {
             this.index--;
-            process.stdout.moveCursor(0, -1);
         }
     }
 }
