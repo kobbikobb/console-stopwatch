@@ -21,8 +21,11 @@ export class Timers {
         const timer = new Timer();
         this.timers.push(timer);
         this.index = this.timers.length - 1;
-        console.log(""); // To add a line for the timer to be displayd
         return timer;
+    }
+
+    getOtherTimers() {
+        return this.timers.filter((_timer, index) => index !== this.index);
     }
 
     startCurrentTimer() {
@@ -53,17 +56,16 @@ export class Timers {
         }
     }
 
+    // The redraw loop owns the cursor, so switching only moves the index.
     moveDown() {
         if (this.index < this.timers.length - 1) {
             this.index++;
-            process.stdout.moveCursor(0, +1);
         }
     }
 
     moveUp() {
         if (this.index > 0) {
             this.index--;
-            process.stdout.moveCursor(0, -1);
         }
     }
 }
