@@ -1,7 +1,7 @@
 import { run } from "../app";
 
 describe("app run", () => {
-    const consoleSpy = jest.spyOn(console, "log").mockImplementation();
+    const consoleSpy = jest.spyOn(console, "log");
     const exitSpy = jest.spyOn(process, "exit").mockImplementation();
     const setRawMode = jest.fn();
     const clearLine = jest.fn();
@@ -69,16 +69,21 @@ describe("app run", () => {
             row: 0,
             column: 0,
             writeStarts: [] as { row: number; column: number }[],
+            // withFrameSupport replaces moveCursor with a plain jest.fn, so a
+            // test that resizes has to put the model back afterwards.
+            attach: () => {
+                process.stdout.cursorTo = ((x: number) => {
+                    terminal.column = Math.max(0, x);
+                }) as typeof process.stdout.cursorTo;
+                process.stdout.moveCursor = ((x: number, y: number) => {
+                    terminal.column = Math.max(0, terminal.column + x);
+                    terminal.row = Math.max(0, terminal.row + y);
+                }) as typeof process.stdout.moveCursor;
+                process.stdout.clearScreenDown =
+                    (() => {}) as typeof process.stdout.clearScreenDown;
+            },
         };
-        process.stdout.cursorTo = ((x: number) => {
-            terminal.column = Math.max(0, x);
-        }) as typeof process.stdout.cursorTo;
-        process.stdout.moveCursor = ((x: number, y: number) => {
-            terminal.column = Math.max(0, terminal.column + x);
-            terminal.row = Math.max(0, terminal.row + y);
-        }) as typeof process.stdout.moveCursor;
-        process.stdout.clearScreenDown =
-            (() => {}) as typeof process.stdout.clearScreenDown;
+        terminal.attach();
         const realWrite = write.getMockImplementation();
         write.mockImplementation((chunk: unknown) => {
             const text = String(chunk);
@@ -120,6 +125,11 @@ describe("app run", () => {
         jest.useFakeTimers();
         withoutFrameSupport();
         process.env.TERM = originalTerm;
+        // The menu goes through console.log, so it has to reach the fake
+        // terminal too, or the cursor model cannot see the rows it occupies.
+        consoleSpy.mockImplementation((...args: unknown[]) => {
+            process.stdout.write(`${args.map(String).join(" ")}\n`);
+        });
     });
 
     afterEach(() => {
@@ -289,6 +299,27 @@ describe("app run", () => {
             expect(new Set(rows).size).toBe(1);
         });
 
+        it("should start the first frame at the left edge", () => {
+            // Nothing has been drawn yet, so there is nothing to wipe, and the
+            // cursor is still sitting at the end of the shell prompt. The frame
+            // is wider than whatever is left of that line, so it has to start
+            // at the left edge or it wraps.
+            const terminal = fakeTerminal();
+            const prompt =
+                "$ cd ~/code/console-stopwatch && git switch big-block-digit-display";
+            process.stdout.write(prompt);
+            expect(terminal.column).toBeGreaterThan(59);
+            run();
+            jest.advanceTimersByTime(50);
+
+            expect(write).toHaveBeenLastCalledWith(
+                expect.stringContaining("stopwatch"),
+            );
+            expect(
+                terminal.writeStarts[terminal.writeStarts.length - 1],
+            ).toEqual({ row: 0, column: 0 });
+        });
+
         it("should start the frame at the left edge after a plain line", () => {
             // A plain line leaves the cursor at the end of the text, and
             // moveCursor does not reset the column, so the frame would be drawn
@@ -302,15 +333,72 @@ describe("app run", () => {
             );
 
             withFrameSupport(120);
+            terminal.attach();
             terminal.writeStarts.length = 0;
             jest.advanceTimersByTime(50);
 
             expect(write).toHaveBeenLastCalledWith(
                 expect.stringContaining("stopwatch"),
             );
+            // On the left edge, and in the menu's place rather than below it.
             expect(
                 terminal.writeStarts[terminal.writeStarts.length - 1],
             ).toEqual({ row: 0, column: 0 });
+        });
+
+        it("should not stack up menus when the display changes", () => {
+            // The menu sits above the time line, so a wipe that only knows
+            // about the line leaves the menu behind and every flip through
+            // fallback mode pushes the display further down the screen.
+            withFrameSupport(40);
+            const terminal = fakeTerminal();
+            run();
+            jest.advanceTimersByTime(50);
+
+            for (let cycle = 0; cycle < 3; cycle++) {
+                withFrameSupport(120);
+                terminal.attach();
+                jest.advanceTimersByTime(50);
+                expect(write).toHaveBeenLastCalledWith(
+                    expect.stringContaining("stopwatch"),
+                );
+                expect(terminal.row).toBe(11);
+
+                withFrameSupport(40);
+                terminal.attach();
+                jest.advanceTimersByTime(50);
+                // The menu is five rows and the time line is the sixth.
+                expect(terminal.row).toBe(5);
+            }
+        });
+
+        it("should not drift when the display changes below other output", () => {
+            // Resizing away from the frame has to wipe exactly the rows the
+            // fallback printed. Wiping one row too many would climb a row per
+            // change and eventually eat whatever was printed above, so the
+            // frame is checked against a cursor that is not at the top.
+            const terminal = fakeTerminal();
+            process.stdout.write("\n".repeat(7));
+            expect(terminal.row).toBe(7);
+            run();
+            jest.advanceTimersByTime(50);
+
+            for (let cycle = 0; cycle < 3; cycle++) {
+                withFrameSupport(40);
+                terminal.attach();
+                jest.advanceTimersByTime(50);
+                // The menu is five rows and the time line is the sixth.
+                expect(terminal.row).toBe(12);
+
+                withFrameSupport(120);
+                terminal.attach();
+                terminal.writeStarts.length = 0;
+                jest.advanceTimersByTime(50);
+                // Back on the same row, not a row higher and not a row lower.
+                expect(
+                    terminal.writeStarts[terminal.writeStarts.length - 1].row,
+                ).toBe(7);
+            }
         });
 
         it("should keep the frame on the same rows after adding a timer", () => {

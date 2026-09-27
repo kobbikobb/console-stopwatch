@@ -106,6 +106,10 @@ export function run() {
 
     function drawFrame(rows: string[]) {
         wipeFrame();
+        // The first frame of a session lands wherever the shell prompt left the
+        // cursor, which is usually part way across the row, and the frame is
+        // wider than the space that is left.
+        process.stdout.cursorTo(0);
         process.stdout.write(`${rows.join("\n")}\n`);
         drawnRows = rows.length;
     }
@@ -114,7 +118,14 @@ export function run() {
         process.stdout.clearLine(0);
         process.stdout.cursorTo(0);
         process.stdout.write(line);
-        drawnRows = 1;
+        // The line sits below the menu printMenu just wrote, and the next wipe
+        // has to take the whole region with it: forgetting the menu leaves a
+        // copy of it on screen every time the display changes mode. The cursor
+        // is left on the last row drawn, so that is what it takes to get back
+        // to the top of the region. Counting the line as a row of its own would
+        // climb a row every time the display changed and eventually wipe
+        // whatever was printed above.
+        drawnRows = MENU_LINES.length + 1;
     }
 
     function updateWindowTitle(milliseconds: number, now: number) {
