@@ -19,7 +19,17 @@ Simple stopwatch for the console. Simple and quick 🚀
 
 The elapsed time is drawn in block digits, redrawn in place, and mirrored in
 the window title. Any other timers are listed underneath, and the up and down
-arrows switch between them.
+arrows switch between them. The hours are only shown once there are any, and
+the keys you can press are listed under the timer.
+
+```
+  █   █     █   █    ███ ███
+█ █ █ █ █ █ █ █ █     █ █ █
+█ █ █ █   █ █ █ █     █ ███
+█ █ █ █ █ █ █ █ █     █ █ █
+ █   █     █   █  █   █ ███
+  r reset · n new · ␣ pause · esc quit
+```
 
 If the terminal is too small for the digits, the display falls back to a single
 line of text.

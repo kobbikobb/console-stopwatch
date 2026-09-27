@@ -3,14 +3,19 @@ function formatNumber(number: number) {
 }
 
 export function millisecondsToPrettyDuration(totalMilliseconds: number) {
-    const milliseconds = Math.floor((totalMilliseconds % 1000) / 10);
-    const seconds = Math.floor(totalMilliseconds / 1000) % 60;
-    const minutes = Math.floor(totalMilliseconds / 1000 / 60) % 60;
+    const centiseconds = formatNumber(
+        Math.floor((totalMilliseconds % 1000) / 10),
+    );
+    const seconds = formatNumber(Math.floor(totalMilliseconds / 1000) % 60);
+    const minutes = formatNumber(
+        Math.floor(totalMilliseconds / 1000 / 60) % 60,
+    );
     const hours = Math.floor(totalMilliseconds / 1000 / 60 / 60);
 
-    return `${formatNumber(hours)}:${formatNumber(minutes)}:${formatNumber(
-        seconds,
-    )}.${formatNumber(milliseconds)}`;
+    // Hours are only spent once there are any, which keeps a fresh stopwatch
+    // eight characters wide instead of eleven.
+    const time = `${minutes}:${seconds}.${centiseconds}`;
+    return hours > 0 ? `${hours}:${time}` : time;
 }
 
 // The same time without the hundredths, which is all a window title has room

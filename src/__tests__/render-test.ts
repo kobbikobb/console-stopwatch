@@ -1,9 +1,12 @@
-import { GLYPH_HEIGHT } from "../blockDigits";
+import { digitsWidth, GLYPH_HEIGHT } from "../blockDigits";
 import {
     colorFor,
     digitsHeight,
     digitsRequiredWidth,
+    hintWidth,
+    PADDING,
     renderDigits,
+    renderHint,
     renderListedTimer,
     renderPlainLine,
 } from "../render";
@@ -35,8 +38,10 @@ describe("render", () => {
             // The colour opens at the very start and the glyphs follow it
             // immediately. An empty coloured string would reset the colour again
             // before a single glyph was drawn, leaving the digits plain.
-            expect(first.startsWith(colour)).toBe(true);
-            expect(first.startsWith(`${colour}${RESET}`)).toBe(false);
+            expect(first.startsWith(colour)).toBe(false);
+            expect(first.startsWith(`${" ".repeat(PADDING)}${colour}`)).toBe(
+                true,
+            );
             expect(first.endsWith(RESET)).toBe(true);
         });
 
@@ -65,12 +70,38 @@ describe("render", () => {
                 isRunning: true,
             });
 
-            // The block is exactly as wide as the time needs, and a different
-            // time draws a different block.
+            // The block is exactly as wide as the time needs plus the padding,
+            // and a different time draws a different block. The gate is wider
+            // than this on purpose, to cover the hours appearing later.
             expect(stripAnsi(oneMinute[0]).length).toBe(
-                digitsRequiredWidth(60 * 1000),
+                PADDING + digitsWidth("01:00.00"),
             );
             expect(oneMinute).not.toEqual(oneMinuteOne);
+        });
+
+        it("should leave the hours out until there are any", () => {
+            const zero = stripAnsi(
+                renderDigits({ milliseconds: 0, isRunning: true })[0],
+            );
+            const oneHour = stripAnsi(
+                renderDigits({
+                    milliseconds: 60 * 60 * 1000,
+                    isRunning: true,
+                })[0],
+            );
+
+            // The hour brings a three wide glyph, a separator and two gaps.
+            expect(zero).toHaveLength(oneHour.length - 6);
+        });
+
+        it("should inset every row by the padding", () => {
+            const rows = renderDigits({ milliseconds: 50, isRunning: true });
+
+            rows.forEach((row) => {
+                expect(stripAnsi(row).startsWith(" ".repeat(PADDING))).toBe(
+                    true,
+                );
+            });
         });
     });
 
@@ -99,22 +130,62 @@ describe("render", () => {
                 isRunning: true,
             });
 
-            expect(stripAnsi(row)).toContain("00:00:12.34");
+            expect(stripAnsi(row)).toContain("00:12.34");
         });
 
-        it("should be indented under the digits", () => {
+        it("should line up with the digits", () => {
             const row = renderListedTimer({ milliseconds: 0, isRunning: true });
+            const digits = renderDigits({ milliseconds: 0, isRunning: true });
 
-            expect(row.startsWith("  ")).toBe(true);
+            // Both start at the padding, so the listed timers sit under the
+            // left edge of the block rather than against the terminal.
+            expect(stripAnsi(row).startsWith(" ".repeat(PADDING))).toBe(true);
+            expect(stripAnsi(digits[0]).startsWith(" ".repeat(PADDING))).toBe(
+                true,
+            );
+        });
+    });
+
+    describe("renderHint", () => {
+        it("should be indented like the rest of the display", () => {
+            expect(stripAnsi(renderHint())).toMatch(/^ {2}\S/);
+        });
+
+        it("should be the dim colour of the listed timers", () => {
+            expect(renderHint()).toContain(`${ESC}[38;5;244m`);
+        });
+
+        it("should name every key", () => {
+            const hint = stripAnsi(renderHint());
+
+            ["r reset", "n new", "pause", "esc quit"].forEach((key) => {
+                expect(hint).toContain(key);
+            });
         });
     });
 
     describe("digitsRequiredWidth", () => {
-        it("should be the width the digits draw at zero", () => {
+        it("should cover the width the digits draw at zero", () => {
             const required = digitsRequiredWidth(0);
             const drawn = renderDigits({ milliseconds: 0, isRunning: true });
 
-            expect(required).toBe(stripAnsi(drawn[0]).length);
+            expect(required).toBeGreaterThanOrEqual(stripAnsi(drawn[0]).length);
+        });
+
+        it("should cover the hours appearing an hour in", () => {
+            const under = digitsRequiredWidth(59 * 60 * 1000);
+            const over = digitsRequiredWidth(60 * 60 * 1000);
+
+            // The digits grow by four columns when the first hour appears, and
+            // the gate has to already allow for it or the display would drop to
+            // the plain line at that point.
+            expect(over).toBe(under);
+        });
+
+        it("should be wider than the hint row", () => {
+            // A row wider than the gate wraps, and the cursor arithmetic does
+            // not know about the extra line.
+            expect(hintWidth()).toBeLessThanOrEqual(digitsRequiredWidth(0));
         });
 
         it("should grow past 99 hours", () => {
@@ -126,20 +197,18 @@ describe("render", () => {
     });
 
     describe("digitsHeight", () => {
-        it("should be the glyph height with no other timers", () => {
-            expect(digitsHeight(0)).toBe(GLYPH_HEIGHT);
+        it("should be the glyph height and the hint", () => {
+            expect(digitsHeight(0)).toBe(GLYPH_HEIGHT + 1);
         });
 
         it("should add a row per other timer", () => {
-            expect(digitsHeight(2)).toBe(GLYPH_HEIGHT + 2);
+            expect(digitsHeight(2)).toBe(GLYPH_HEIGHT + 2 + 1);
         });
     });
 
     describe("renderPlainLine", () => {
         it("should be the same output as before this change", () => {
-            expect(renderPlainLine(50)).toBe(
-                "\x1b[38;5;214m00:00:00.05\x1b[0m",
-            );
+            expect(renderPlainLine(50)).toBe("\x1b[38;5;214m00:00.05\x1b[0m");
         });
     });
 });

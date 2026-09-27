@@ -3,7 +3,9 @@ import { Timers } from "./Timers";
 import {
     digitsHeight,
     digitsRequiredWidth,
+    hintWidth,
     renderDigits,
+    renderHint,
     renderListedTimer,
     renderPlainLine,
 } from "./render";
@@ -17,14 +19,13 @@ const TITLE_SUFFIX = "\x07";
 // and the plain line if it never does. Guessing either way means drawing in
 // the wrong place or saying nothing at all.
 const SIZE_WAIT_MILLISECONDS = 1000;
-const HINTS = "r reset  \u00b7  n new  \u00b7  \u2423 pause  \u00b7  esc quit";
 
-// Whether the terminal can move the cursor up and clear below it, which is
-// what redrawing several rows in place needs.
+// Whether the terminal can move the cursor up and down, which is what redrawing
+// several rows in place needs. A terminal that cannot still gets the plain line,
+// overwritten on its own row.
 function hasDigitSupport() {
     return (
         typeof process.stdout.moveCursor === "function" &&
-        typeof process.stdout.clearScreenDown === "function" &&
         process.env.TERM !== "dumb"
     );
 }
@@ -38,9 +39,9 @@ function hasKnownSize() {
     );
 }
 
-// The digits plus the rows for the listed timers have to fit, and so does the
-// row the cursor ends up parked on below them. The hint line takes one more
-// row above them.
+// The digits, the rows for the listed timers and the hint under them have to
+// fit, and so does the row the cursor ends up parked on below them. Nothing is
+// drawn above the region, so that is the only row needed up there.
 function canDrawDigits(milliseconds: number, listedTimers: number) {
     if (!hasKnownSize()) {
         return false;
@@ -49,7 +50,18 @@ function canDrawDigits(milliseconds: number, listedTimers: number) {
     return (
         hasDigitSupport() &&
         (columns as number) >= digitsRequiredWidth(milliseconds) &&
-        (rows as number) >= digitsHeight(listedTimers) + 2
+        (rows as number) >= digitsHeight(listedTimers) + 1
+    );
+}
+
+// Whether the hint can be printed on one row. A hint that wraps takes a second
+// row the plain line knows nothing about, and the plain line is exactly what a
+// terminal too narrow for the hint gets. An unknown width is left to print it:
+// there is nothing to measure against.
+function hintFitsOnOneRow() {
+    return (
+        typeof process.stdout.columns !== "number" ||
+        (process.stdout.columns as number) >= hintWidth()
     );
 }
 
@@ -62,45 +74,83 @@ export function run() {
         process.stdin.setRawMode(true);
     }
 
-    console.log(HINTS);
-
     // How many rows below the top of the region the cursor has ended up. Every
-    // digits row ends with a newline, so the cursor is parked that far down
-    // and the next redraw has to travel all the way back up. The plain line
-    // ends without one, which leaves the cursor on its only row and nothing to
-    // travel.
+    // region row ends with a newline, so the cursor is parked that far down and
+    // the next redraw has to travel all the way back up.
     let drawnRows = 0;
+    // The plain line has no region to put the hint under, so the hint is
+    // printed once above it and stays there until the digits take over and
+    // reclaim the row.
+    let printedHintAbove = false;
     let lastTitleUpdate = Number.NEGATIVE_INFINITY;
     let waitingForSizeSince: number | null = null;
 
     function wipe() {
-        // moveCursor is relative and leaves the column alone, so the cursor has
-        // to be put back at the left edge first or the next draw starts part
-        // way across the row.
         process.stdout.cursorTo(0);
-        if (drawnRows > 0) {
+        if (drawnRows === 0) {
+            return;
+        }
+        // The hint can be a row the region sits above, in the case of the plain
+        // line, so the wipe clears exactly the rows the last draw owned instead
+        // of everything below the cursor.
+        //
+        // Moving down and back up is only needed when the region is more than
+        // one row tall, and a terminal that never drew more than one row never
+        // had moveCursor to begin with.
+        const taller = drawnRows > 1;
+        if (taller) {
             process.stdout.moveCursor(0, -drawnRows);
         }
-        process.stdout.clearScreenDown();
+        for (let row = 0; row < drawnRows; row++) {
+            // 1 erases from the cursor to the end of the row, so a row that is
+            // wider than what is drawn now is left clean.
+            process.stdout.clearLine(1);
+            if (row < drawnRows - 1) {
+                process.stdout.moveCursor(0, 1);
+            }
+        }
+        if (taller) {
+            process.stdout.moveCursor(0, -(drawnRows - 1));
+        }
         drawnRows = 0;
     }
 
-    function drawDigits(rows: string[]) {
+    function drawRows(rows: string[]) {
         wipe();
         process.stdout.write(`${rows.join("\n")}\n`);
         drawnRows = rows.length;
     }
 
     function drawLine(line: string) {
-        // Only travel up and clear if there are digits to take back. A
-        // terminal with no cursor support never got that far, and calling these
-        // anyway would throw on a pipe.
-        if (drawnRows > 0) {
-            wipe();
+        // The wipe comes first. The hint is a row the line does not own, so
+        // printing it before the wipe would leave the line a row lower than the
+        // row the next wipe is measured from, and the display would step down
+        // one row every time it changed.
+        wipe();
+        if (!printedHintAbove && hintFitsOnOneRow()) {
+            // There is no region to put the hint under, so it goes above the
+            // line and stays there.
+            console.log(renderHint());
+            printedHintAbove = true;
         }
-        process.stdout.clearLine(0);
-        process.stdout.cursorTo(0);
+        // The line ends without a newline, which leaves the cursor on its only
+        // row and nothing to travel.
         process.stdout.write(line);
+        drawnRows = 1;
+    }
+
+    function reclaimHintRow() {
+        if (!printedHintAbove) {
+            return;
+        }
+        // The hint above the plain line is a row above the region, and the
+        // region carries a hint of its own under the timer. Clear it along with
+        // the region and start one row higher, so it is not left behind twice.
+        process.stdout.cursorTo(0);
+        process.stdout.moveCursor(0, -1);
+        process.stdout.clearScreenDown();
+        drawnRows = 0;
+        printedHintAbove = false;
     }
 
     function updateWindowTitle(milliseconds: number, now: number) {
@@ -131,7 +181,12 @@ export function run() {
 
         if (canDrawDigits(milliseconds, others.length)) {
             updateWindowTitle(milliseconds, Date.now());
-            drawDigits([
+            reclaimHintRow();
+            // The hint is a row of the region rather than a line printed once,
+            // because it goes under the timer. That means it is redrawn with
+            // everything else, and the region is the last thing on the screen,
+            // which is what lets the wipe take exactly the rows it drew.
+            drawRows([
                 ...renderDigits({
                     milliseconds,
                     isRunning: timer.isRunning(),
@@ -142,6 +197,7 @@ export function run() {
                         isRunning: other.isRunning(),
                     }),
                 ),
+                renderHint(),
             ]);
             return;
         }

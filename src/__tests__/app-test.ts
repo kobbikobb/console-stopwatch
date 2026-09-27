@@ -18,26 +18,78 @@ describe("app run", () => {
     const originalRows = process.stdout.rows;
     const originalIsTTY = process.stdout.isTTY;
 
-    // A terminal that keeps track of where the cursor is, so a redraw can be
-    // checked by where the next write lands rather than by what was written.
+    // A terminal that keeps track of where the cursor is and what is on the
+    // screen, so a redraw can be checked by where the next write lands and by
+    // what the previous one left behind.
     const fakeTerminal = () => {
         const terminal = {
             row: 0,
             column: 0,
+            // One string per row. A row that was never written to is empty, so
+            // leftover content from a region that shrank is visible.
+            screen: [] as string[],
             writeStarts: [] as { row: number; column: number }[],
+            // A terminal that has filled the last column does not wrap until
+            // something else is written, so a row that fits exactly is one row.
+            pendingWrap: false,
             // Resizing replaces the cursor functions, so a test that resizes
             // has to put the model back afterwards.
             attach: () => {
+                process.stdout.clearLine =
+                    terminal.clearLine as typeof process.stdout.clearLine;
                 process.stdout.cursorTo = ((x: number) => {
                     terminal.column = Math.max(0, x);
+                    terminal.pendingWrap = false;
                 }) as typeof process.stdout.cursorTo;
                 process.stdout.moveCursor = ((x: number, y: number) => {
                     terminal.column = Math.max(0, terminal.column + x);
                     terminal.row = Math.max(0, terminal.row + y);
+                    terminal.pendingWrap = false;
                     return true;
                 }) as typeof process.stdout.moveCursor;
-                process.stdout.clearScreenDown =
-                    (() => {}) as typeof process.stdout.clearScreenDown;
+                process.stdout.clearScreenDown = (() => {
+                    terminal.screen.length = Math.min(
+                        terminal.screen.length,
+                        terminal.row + 1,
+                    );
+                    process.stdout.clearLine(1);
+                }) as typeof process.stdout.clearScreenDown;
+            },
+            clearLine: (mode: number) => {
+                const line = terminal.screen[terminal.row] || "";
+                // 0 erases to the start of the row, 1 to the end of it.
+                terminal.screen[terminal.row] =
+                    mode === 0
+                        ? " ".repeat(terminal.column) +
+                          line.slice(terminal.column)
+                        : line.slice(0, terminal.column);
+            },
+            put: (character: string) => {
+                if (terminal.pendingWrap) {
+                    terminal.row += 1;
+                    terminal.column = 0;
+                    terminal.pendingWrap = false;
+                }
+                while (terminal.screen.length <= terminal.row) {
+                    terminal.screen.push("");
+                }
+                const line = terminal.screen[terminal.row].padEnd(
+                    terminal.column,
+                    " ",
+                );
+                terminal.screen[terminal.row] =
+                    line.slice(0, terminal.column) +
+                    character +
+                    line.slice(terminal.column + 1);
+                terminal.column += 1;
+                // A real terminal wraps, and a wrapped row is the case the
+                // width gate exists to prevent.
+                if (
+                    typeof process.stdout.columns === "number" &&
+                    terminal.column >= process.stdout.columns
+                ) {
+                    terminal.pendingWrap = true;
+                }
             },
         };
         terminal.attach();
@@ -69,9 +121,10 @@ describe("app run", () => {
                 if (character === "\n") {
                     terminal.row += 1;
                     terminal.column = 0;
+                    terminal.pendingWrap = false;
                     continue;
                 }
-                terminal.column += 1;
+                terminal.put(character);
             }
             return realWrite ? realWrite(chunk) : true;
         });
@@ -171,13 +224,14 @@ describe("app run", () => {
         expectWriteToContainLastTime(
             new RegExp(
                 `^${String.fromCharCode(27)}\\[38;5;214m` +
-                    `\\d{2}:\\d{2}:\\d{2}\\.\\d{2}` +
+                    `\\d{2}:\\d{2}\\.\\d{2}` +
                     `${String.fromCharCode(27)}\\[0m$`,
             ),
         );
 
-    it("should write a hint line", () => {
+    it("should write a hint line above the plain line", () => {
         run();
+        jest.advanceTimersByTime(50);
 
         expect(consoleSpy).toHaveBeenCalledTimes(1);
         expect(consoleSpy).toHaveBeenCalledWith(
@@ -185,20 +239,25 @@ describe("app run", () => {
         );
     });
 
+    it("should not reprint the hint above the plain line every frame", () => {
+        run();
+        jest.advanceTimersByTime(500);
+
+        expect(consoleSpy).toHaveBeenCalledTimes(1);
+    });
+
     it("should write elpased time", () => {
         run();
         jest.advanceTimersByTime(50);
 
-        expectWriteToContainTime("00:00:00.05");
+        expectWriteToContainTime("00:00.05");
     });
 
     it("should write elpased time with color", () => {
         run();
         jest.advanceTimersByTime(50);
 
-        expect(write).toHaveBeenLastCalledWith(
-            "\x1b[38;5;214m00:00:00.05\x1b[0m",
-        );
+        expect(write).toHaveBeenLastCalledWith("\x1b[38;5;214m00:00.05\x1b[0m");
     });
 
     it("should write elpased time twice", () => {
@@ -206,8 +265,8 @@ describe("app run", () => {
         jest.advanceTimersByTime(50);
         jest.advanceTimersByTime(50);
 
-        expectWriteToContainTime("00:00:00.05");
-        expectWriteToContainTime("00:00:00.10");
+        expectWriteToContainTime("00:00.05");
+        expectWriteToContainTime("00:00.10");
     });
 
     it("should reset timer", () => {
@@ -217,7 +276,7 @@ describe("app run", () => {
         process.stdin.emit("data", Buffer.from("r"));
         jest.advanceTimersByTime(50);
 
-        expectWriteToContainLastTime("00:00:00.05");
+        expectWriteToContainLastTime("00:00.05");
     });
 
     it("should create new timer", () => {
@@ -227,7 +286,7 @@ describe("app run", () => {
         process.stdin.emit("data", Buffer.from("n"));
         jest.advanceTimersByTime(50);
 
-        expectWriteToContainLastTime("00:00:00.05");
+        expectWriteToContainLastTime("00:00.05");
     });
 
     it("should pause timer", () => {
@@ -235,7 +294,7 @@ describe("app run", () => {
         process.stdin.emit("data", Buffer.from("x"));
         jest.advanceTimersByTime(100);
 
-        expectWriteToContainLastTime("00:00:00.00");
+        expectWriteToContainLastTime("00:00.00");
     });
 
     it("should close the application when pressing ctrl+c", () => {
@@ -259,12 +318,12 @@ describe("app run", () => {
         // the two show different times and moving between them is visible.
         process.stdin.emit("data", Buffer.from("n"));
         jest.advanceTimersByTime(300);
-        expectWriteToContainLastTime("00:00:00.30");
+        expectWriteToContainLastTime("00:00.30");
 
         process.stdin.emit("keypress", "", { name: "up" });
         jest.advanceTimersByTime(50);
 
-        expectWriteToContainLastTime("00:00:00.10");
+        expectWriteToContainLastTime("00:00.10");
     });
 
     describe("when the terminal can draw digits", () => {
@@ -275,9 +334,27 @@ describe("app run", () => {
             jest.advanceTimersByTime(50);
 
             expectDigits();
-            // The hint line took row zero, the digits take five, and the cursor
-            // parks on the row below them.
+            // Five rows of digits and the hint under them, and the cursor parks
+            // on the row below that.
             expect(terminal.row).toBe(6);
+        });
+
+        it("should draw the hint under the timer as part of the display", () => {
+            withDigitSupport(120, 40);
+            fakeTerminal();
+            run();
+            jest.advanceTimersByTime(50);
+
+            // The hint is a row of the region rather than a line printed once
+            // above, so it comes after the digits in the same write and is
+            // redrawn with them.
+            const lastWrite = String(
+                write.mock.calls[write.mock.calls.length - 1][0],
+            );
+            const rows = lastWrite.split("\n").filter((row) => row.length > 0);
+            expect(rows[0]).toContain("█");
+            expect(rows[rows.length - 1]).toContain("esc quit");
+            expect(consoleSpy).not.toHaveBeenCalled();
         });
 
         it("should keep the digits on the same rows every frame", () => {
@@ -288,9 +365,8 @@ describe("app run", () => {
                 jest.advanceTimersByTime(50);
                 const row =
                     terminal.writeStarts[terminal.writeStarts.length - 1].row;
-                // The hint line took row zero, the digits take five, and the
-                // cursor parks on the row below them.
-                expect(row).toBe(1);
+                // Nothing is drawn above the region, so it starts on row zero.
+                expect(row).toBe(0);
             }
             expect(terminal.row).toBe(6);
         });
@@ -299,13 +375,13 @@ describe("app run", () => {
             withDigitSupport(120, 40);
             const terminal = fakeTerminal();
             process.stdout.write("$ a prompt longer than ".repeat(3));
-            expect(terminal.column).toBeGreaterThan(37);
+            expect(terminal.column).toBeGreaterThan(39);
             run();
             jest.advanceTimersByTime(50);
 
             expect(
                 terminal.writeStarts[terminal.writeStarts.length - 1],
-            ).toEqual({ row: 1, column: 0 });
+            ).toEqual({ row: 0, column: 0 });
         });
 
         it("should list the other timers under the digits", () => {
@@ -316,16 +392,21 @@ describe("app run", () => {
             jest.advanceTimersByTime(50);
 
             // The timer that was replaced is stopped, so it is listed as such.
-            expectWriteToContainLastTime(/⏸.*00:00:00\.00/);
+            expectWriteToContainLastTime(/⏸.*00:00\.00/);
             // One more row for the timer that was added.
             expect(terminal.row).toBe(7);
         });
 
         it("should not stack up rows when the display changes", () => {
-            withDigitSupport(20, 40);
+            // 38 columns is one too few for the digits, and exactly enough for
+            // the hint, so the fallback prints it above the line.
+            withDigitSupport(38, 40);
             const terminal = fakeTerminal();
             run();
             jest.advanceTimersByTime(50);
+            // The hint is printed above the plain line, so the line is on row
+            // one and ends without a newline, leaving the cursor on it.
+            expect(terminal.row).toBe(1);
 
             for (let cycle = 0; cycle < 3; cycle++) {
                 withDigitSupport(120, 40);
@@ -336,15 +417,18 @@ describe("app run", () => {
                 // The plain line left the cursor at the end of the text, and
                 // moveCursor does not touch the column, so the digits have to
                 // be put back at the left edge or they start part way across.
+                // The hint the fallback left above is reclaimed, so the region
+                // starts on row zero rather than below it.
                 expect(
                     terminal.writeStarts[terminal.writeStarts.length - 1],
-                ).toEqual({ row: 1, column: 0 });
+                ).toEqual({ row: 0, column: 0 });
 
-                withDigitSupport(20, 40);
+                withDigitSupport(38, 40);
                 terminal.attach();
                 jest.advanceTimersByTime(50);
-                // The plain line ends without a newline, so the cursor is left
-                // on the row below the hint line.
+                // Back to the plain line, wiped off the digits and drawn under
+                // the hint, which is printed again now the region no longer
+                // carries one.
                 expect(terminal.row).toBe(1);
             }
         });
@@ -354,13 +438,13 @@ describe("app run", () => {
             const terminal = fakeTerminal();
             process.stdout.write("\n".repeat(7));
             run();
-            // Seven rows of other output, then the hint line, so the region
-            // below it starts on row eight.
+            // Seven rows of other output, so the region starts on row seven and
+            // the cursor parks on row thirteen.
             jest.advanceTimersByTime(50);
             expect(terminal.row).toBe(13);
 
             for (let cycle = 0; cycle < 3; cycle++) {
-                withDigitSupport(20, 40);
+                withDigitSupport(38, 40);
                 terminal.attach();
                 jest.advanceTimersByTime(50);
                 expect(terminal.row).toBe(8);
@@ -370,15 +454,72 @@ describe("app run", () => {
                 terminal.writeStarts.length = 0;
                 jest.advanceTimersByTime(50);
                 // Back on the same row, not a row higher and not a row lower.
+                // The hint the fallback printed is one row above the line, and
+                // reclaiming it puts the region back on row seven.
                 expect(
                     terminal.writeStarts[terminal.writeStarts.length - 1].row,
-                ).toBe(8);
+                ).toBe(7);
             }
         });
 
+        it("should leave nothing of the digits behind when it falls back", () => {
+            withDigitSupport(120, 40);
+            const terminal = fakeTerminal();
+            run();
+            jest.advanceTimersByTime(50);
+            expect(terminal.screen.some((row) => row.includes("█"))).toBe(true);
+
+            withDigitSupport(38, 40);
+            terminal.attach();
+            jest.advanceTimersByTime(50);
+
+            // The rows the region used to own are cleared rather than left
+            // showing the last frame of the digits, which a cursor position
+            // cannot tell. The hint above the line is the only thing left.
+            const left = terminal.screen.filter((row) => row.includes("█"));
+            expect(left).toHaveLength(0);
+            expect(
+                terminal.screen.filter((row) => row.trim().length > 0),
+            ).toHaveLength(2);
+        });
+
+        it("should leave nothing of the digits behind when they come back", () => {
+            withDigitSupport(38, 40);
+            const terminal = fakeTerminal();
+            run();
+            jest.advanceTimersByTime(50);
+
+            withDigitSupport(120, 40);
+            terminal.attach();
+            jest.advanceTimersByTime(50);
+
+            // The hint the fallback printed above the line is gone, and the
+            // display has a hint of its own under the timer, so the screen
+            // holds the region and nothing else.
+            expect(terminal.screen[0]).toContain("█");
+            expect(
+                terminal.screen.filter((row) => row.trim().length > 0),
+            ).toHaveLength(6);
+        });
+
+        it("should not print the hint when it would wrap", () => {
+            withDigitSupport(20, 40);
+            const terminal = fakeTerminal();
+            run();
+            jest.advanceTimersByTime(50);
+
+            // The hint is wider than the terminal, so it would take a second
+            // row the plain line knows nothing about.
+            expect(consoleSpy).not.toHaveBeenCalled();
+            expect(terminal.row).toBe(0);
+            expect(
+                terminal.screen.filter((row) => row.trim().length > 0),
+            ).toHaveLength(1);
+        });
+
         it("should fall back to the plain line when too narrow", () => {
-            // The digits need 37 columns at zero, and 36 is one too few.
-            withDigitSupport(36, 40);
+            // The display needs 39 columns, and 38 is one too few.
+            withDigitSupport(38, 40);
             fakeTerminal();
             run();
             jest.advanceTimersByTime(50);
@@ -387,7 +528,7 @@ describe("app run", () => {
         });
 
         it("should draw the digits at exactly the width they need", () => {
-            withDigitSupport(37, 40);
+            withDigitSupport(39, 40);
             fakeTerminal();
             run();
             jest.advanceTimersByTime(50);
@@ -396,8 +537,8 @@ describe("app run", () => {
         });
 
         it("should fall back to the plain line when too short", () => {
-            // Five rows of digits, the row the cursor parks on, and the hint
-            // line need seven rows. Six is one too few.
+            // Five rows of digits, the hint under them and the row the cursor
+            // parks on need seven rows. Six is one too few.
             withDigitSupport(120, 6);
             fakeTerminal();
             run();
@@ -450,8 +591,10 @@ describe("app run", () => {
             run();
             jest.advanceTimersByTime(100);
 
-            // Only the hint line, no display to guess at.
-            expect(terminal.row).toBe(1);
+            // Nothing at all, not even the hint: there is no way to know whether
+            // the terminal is tall enough for the display to put it under.
+            expect(terminal.row).toBe(0);
+            expect(consoleSpy).not.toHaveBeenCalled();
         });
 
         it("should give up waiting and write the plain line", () => {
@@ -490,7 +633,7 @@ describe("app run", () => {
             jest.advanceTimersByTime(50);
 
             expect(write).toHaveBeenCalledWith(
-                expect.stringContaining("⏱ 00:00:00"),
+                expect.stringContaining("⏱ 00:00"),
             );
         });
 
