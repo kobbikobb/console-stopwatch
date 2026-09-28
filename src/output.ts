@@ -59,8 +59,18 @@ function padsAroundLine() {
 function createRegion() {
     // How many rows below the top of the region the cursor has ended up. Every
     // region row ends with a newline, so the cursor is parked that far down and
-    // the next redraw has to travel all the way back up.
+    // the next redraw has to travel all the way back up. A line written without
+    // one leaves the cursor on the row itself, so this is not the number of rows
+    // the region is tall and is kept apart from it for exactly that reason.
+    let cursorRows = 0;
+    // How many rows the last frame wrote below the top of the region. These are
+    // the rows the region owns, and the only ones a redraw may take back.
     let drawnRows = 0;
+    // How many rows the display has printed above the top of the region. The
+    // region cannot redraw them, so it only ever gives them back whole, and it
+    // keeps the count itself rather than being told it: a count from outside is
+    // a number that can go out of step with the rows on the screen.
+    let rowsAbove = 0;
 
     function wipe() {
         process.stdout.cursorTo(0);
@@ -76,7 +86,7 @@ function createRegion() {
         // moveCursor to begin with.
         const taller = drawnRows > 1;
         if (taller) {
-            process.stdout.moveCursor(0, -drawnRows);
+            process.stdout.moveCursor(0, -cursorRows);
         }
         for (let row = 0; row < drawnRows; row++) {
             // 1 erases from the cursor to the end of the row, so a row that is
@@ -90,10 +100,55 @@ function createRegion() {
             process.stdout.moveCursor(0, -(drawnRows - 1));
         }
         drawnRows = 0;
+        cursorRows = 0;
+    }
+
+    // Give back every row the display owns: the rows above the region as well as
+    // the region itself, for a display that leaves rows above itself which the
+    // display taking over knows nothing about. How far up that is depends on how
+    // many rows were printed above the region and how far below them the cursor
+    // ended up - a padded line is a region of two rows with the cursor parked
+    // below it, a plain one a single row with the cursor left on it - so it is
+    // arithmetic on what was written, and not a number the caller has to remember
+    // to get right.
+    function clear() {
+        if (drawnRows === 0 && rowsAbove === 0) {
+            // Nothing was printed, so there is nothing to give back. Clearing from
+            // the cursor would take the rows above the display, which belong to
+            // whatever printed them.
+            return;
+        }
+        process.stdout.cursorTo(0);
+        process.stdout.moveCursor(0, -(cursorRows + rowsAbove));
+        process.stdout.clearScreenDown();
+        drawnRows = 0;
+        cursorRows = 0;
+        rowsAbove = 0;
     }
 
     return {
         wipe,
+        clear,
+
+        // The rows a display leaves above the region: printed once, at the top of
+        // the display, and then left where they are because a redraw cannot reach
+        // them. How many there are is a question about the terminal as it is now,
+        // so a resize can answer it differently - and when it does, the rows
+        // printed before are a different set of rows, so they have to be given
+        // back before the new ones go out. Asking for the same number again is
+        // what keeps the menu from being reprinted every frame, and comparing the
+        // number rather than remembering whether the menu was printed is what
+        // keeps the two from ever disagreeing about what is on the screen.
+        printAbove(rows: string[]) {
+            if (rows.length === rowsAbove) {
+                return;
+            }
+            clear();
+            for (const row of rows) {
+                console.log(row);
+            }
+            rowsAbove = rows.length;
+        },
 
         // Every row ends with a newline, so the cursor parks one row below them
         // and the next frame travels all the way back up.
@@ -101,6 +156,7 @@ function createRegion() {
             wipe();
             process.stdout.write(`${rows.join("\n")}\n`);
             drawnRows = rows.length;
+            cursorRows = rows.length;
         },
 
         // One row and no newline, which leaves the cursor on it. This is the one
@@ -110,20 +166,7 @@ function createRegion() {
             wipe();
             process.stdout.write(line);
             drawnRows = 1;
-        },
-
-        // Clear the region and the rows above it, and start from there. For a
-        // display that leaves rows above itself which the display taking over
-        // knows nothing about. How far up that is depends on how many rows the
-        // last frame drew and how many the display left above them, so it cannot
-        // be a fixed offset: a padded line has the blank row above and below it
-        // as well, and stopping on the blank one would leave the menu and the
-        // line behind.
-        clearIncludingRowAbove(rowsAbove: number) {
-            process.stdout.cursorTo(0);
-            process.stdout.moveCursor(0, -(drawnRows + rowsAbove));
-            process.stdout.clearScreenDown();
-            drawnRows = 0;
+            cursorRows = 0;
         },
     };
 }
@@ -162,20 +205,19 @@ export function advancedOutput(): OutputProvider {
 // provider takes over the screen and reclaims the rows.
 export function standardOutput(): OutputProvider {
     const region = createRegion();
-    let rowsPrintedAbove = 0;
 
-    function printMenuAbove() {
-        if (rowsPrintedAbove > 0 || !keysFitOnOneRow()) {
-            return;
+    // The rows the line leaves above itself. Nothing when the menu would wrap,
+    // since the line would then be a row lower than the next wipe expects and
+    // the display would step down a row every time it changed; otherwise the
+    // menu, and the same gap under it that the block digits have, so the two
+    // displays are not two different rhythms. Both are answered by the terminal
+    // as it is now, and the region takes the rows it printed before back when
+    // the answer changes.
+    function menuRows(padded: boolean) {
+        if (!keysFitOnOneRow()) {
+            return [];
         }
-        console.log(renderHint());
-        rowsPrintedAbove = 1;
-        if (padsAroundLine()) {
-            // The same gap under the menu the block digits have, so the two
-            // displays are not two different rhythms.
-            console.log("");
-            rowsPrintedAbove = 2;
-        }
+        return padded ? [renderHint(), ""] : [renderHint()];
     }
 
     return {
@@ -183,14 +225,18 @@ export function standardOutput(): OutputProvider {
         // when nothing else will draw.
         canDraw: () => true,
         draw(current) {
-            // The wipe comes first, then the menu. The menu is rows the line does
-            // not own, so printing them before the wipe would leave the line a row
-            // lower than the row the next wipe is measured from, and the display
-            // would step down one row every time it changed.
+            // Asked once, so the gap above the line and the blank row under it
+            // are decided by the same answer rather than by a second reading of
+            // a terminal that can change between the two.
+            const padded = padsAroundLine();
+            // The menu first, and only ever when the region is empty: either
+            // this is the first frame or printAbove has just given back the rows
+            // it printed, so it can never leave the line a row lower than the
+            // row the wipe below is measured from.
+            region.printAbove(menuRows(padded));
             region.wipe();
-            printMenuAbove();
             const line = renderPlainLine(current);
-            if (padsAroundLine()) {
+            if (padded) {
                 // The line and the blank row under it are a region like the block
                 // digits are, so the blank row is cleared along with the line.
                 region.write([line, ""]);
@@ -199,12 +245,7 @@ export function standardOutput(): OutputProvider {
             region.writeLine(line);
         },
         clear() {
-            if (rowsPrintedAbove === 0) {
-                region.wipe();
-                return;
-            }
-            region.clearIncludingRowAbove(rowsPrintedAbove);
-            rowsPrintedAbove = 0;
+            region.clear();
         },
     };
 }
