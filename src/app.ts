@@ -1,4 +1,4 @@
-import readline from "readline";
+import readline, { type Key } from "readline";
 import { Timers } from "./Timers";
 import { advancedOutput, standardOutput } from "./output";
 import { millisecondsToClock } from "./timeUtils";
@@ -15,7 +15,14 @@ const TITLE_SUFFIX = "\x07";
 // the wrong place or saying nothing at all.
 const SIZE_WAIT_MILLISECONDS = 1000;
 
-export function run() {
+// What a caller needs in order to end a run. A run starts a keypress listener
+// and a redraw timer that both outlive the call that started them, so the only
+// way they can be taken back down again is for the caller to be given a way to.
+export interface RunHandle {
+    stop(): void;
+}
+
+export function run(): RunHandle {
     const timers = new Timers();
     timers.startCurrentTimer();
 
@@ -106,17 +113,32 @@ export function run() {
 
     const interval = setInterval(render, RENDER_INTERVAL_MILLISECONDS);
 
+    // The two things this run started, given back to whoever started it. The
+    // listener is named rather than inline so it can be taken off again, and
+    // the stop is idempotent so a handle is safe to hold and call twice.
+    let stopped = false;
+
     function stop() {
+        if (stopped) {
+            return;
+        }
+        stopped = true;
         clearInterval(interval);
-        process.exit(0);
+        process.stdin.off("keypress", onKeypress);
     }
 
-    process.stdin.on("keypress", (_str, key) => {
+    function onKeypress(_str: string | undefined, key: Key) {
         if (!key) {
             return;
         }
         if ((key.ctrl && key.name === "c") || key.name === "escape") {
+            // Tearing the run down and ending the process are separate
+            // decisions, so a caller that only wanted the stopwatch to stop
+            // does not have to end the process with it. This is the CLI, where
+            // esc has always meant quit, and the run is stopped first so
+            // nothing is left listening or drawing on the way out.
             stop();
+            process.exit(0);
         } else if (key.name === "r") {
             timers.resetCurrentTimer();
         } else if (key.name === "n") {
@@ -139,5 +161,9 @@ export function run() {
         // Anything else is ignored. Treating every unbound key as a pause meant a
         // key aimed at nothing silently stopped the timer, which is worse than
         // doing nothing.
-    });
+    }
+
+    process.stdin.on("keypress", onKeypress);
+
+    return { stop };
 }
