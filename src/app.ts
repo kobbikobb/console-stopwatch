@@ -39,9 +39,10 @@ function hasKnownSize() {
     );
 }
 
-// The digits, the rows for the listed timers and the hint under them have to
-// fit, and so does the row the cursor ends up parked on below them. Nothing is
-// drawn above the region, so that is the only row needed up there.
+// The digits, the rows for the listed timers, the hint under them and the blank
+// row below that have to fit, and so does the row the cursor ends up parked on
+// below them. Nothing is drawn above the region, so that is the only row needed
+// up there.
 function canDrawDigits(milliseconds: number, listedTimers: number) {
     if (!hasKnownSize()) {
         return false;
@@ -198,6 +199,12 @@ export function run() {
                     }),
                 ),
                 renderHint(),
+                // A blank row under the display, so it is not flush against
+                // whatever the terminal has below it. The cursor parks on a
+                // blank row anyway, but nothing owns that one, so the display
+                // would slide into it the moment a second timer made the region
+                // a row taller.
+                "",
             ]);
             return;
         }

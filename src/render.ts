@@ -78,12 +78,12 @@ export function hintWidth() {
     return INDENT.length + HINT_TEXT.length;
 }
 
-// Five rows of digits, one per listed timer, and the hint. The redraw moves up
-// this many rows to get back to where it started, and every one of them has to
-// fit, otherwise the write scrolls the screen and the redraw lands somewhere
-// the cursor arithmetic cannot describe.
+// Five rows of digits, one per listed timer, the hint and the blank row under
+// it. The redraw moves up this many rows to get back to where it started, and
+// every one of them has to fit, otherwise the write scrolls the screen and the
+// redraw lands somewhere the cursor arithmetic cannot describe.
 export function digitsHeight(listedTimers: number) {
-    return GLYPH_HEIGHT + listedTimers + 1;
+    return GLYPH_HEIGHT + listedTimers + 2;
 }
 
 // Unchanged from the original output, used when the terminal is too small for

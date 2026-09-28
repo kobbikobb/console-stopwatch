@@ -334,9 +334,9 @@ describe("app run", () => {
             jest.advanceTimersByTime(50);
 
             expectDigits();
-            // Five rows of digits and the hint under them, and the cursor parks
-            // on the row below that.
-            expect(terminal.row).toBe(6);
+            // Five rows of digits, the hint under them and the blank row below
+            // that, with the cursor parked on the row after it.
+            expect(terminal.row).toBe(7);
         });
 
         it("should draw the hint under the timer as part of the display", () => {
@@ -368,7 +368,7 @@ describe("app run", () => {
                 // Nothing is drawn above the region, so it starts on row zero.
                 expect(row).toBe(0);
             }
-            expect(terminal.row).toBe(6);
+            expect(terminal.row).toBe(7);
         });
 
         it("should start the first frame at the left edge", () => {
@@ -394,7 +394,7 @@ describe("app run", () => {
             // The timer that was replaced is stopped, so it is listed as such.
             expectWriteToContainLastTime(/⏸.*00:00\.00/);
             // One more row for the timer that was added.
-            expect(terminal.row).toBe(7);
+            expect(terminal.row).toBe(8);
         });
 
         it("should not stack up rows when the display changes", () => {
@@ -413,7 +413,7 @@ describe("app run", () => {
                 terminal.attach();
                 terminal.writeStarts.length = 0;
                 jest.advanceTimersByTime(50);
-                expect(terminal.row).toBe(6);
+                expect(terminal.row).toBe(7);
                 // The plain line left the cursor at the end of the text, and
                 // moveCursor does not touch the column, so the digits have to
                 // be put back at the left edge or they start part way across.
@@ -439,9 +439,9 @@ describe("app run", () => {
             process.stdout.write("\n".repeat(7));
             run();
             // Seven rows of other output, so the region starts on row seven and
-            // the cursor parks on row thirteen.
+            // the cursor parks on row fourteen.
             jest.advanceTimersByTime(50);
-            expect(terminal.row).toBe(13);
+            expect(terminal.row).toBe(14);
 
             for (let cycle = 0; cycle < 3; cycle++) {
                 withDigitSupport(38, 40);
@@ -502,6 +502,29 @@ describe("app run", () => {
             ).toHaveLength(6);
         });
 
+        it("should leave a blank row under the keys", () => {
+            withDigitSupport(120, 40);
+            const terminal = fakeTerminal();
+            run();
+            jest.advanceTimersByTime(50);
+
+            const hintRow = () =>
+                terminal.screen.findIndex((row) => row.includes("esc quit"));
+            expect(hintRow()).toBe(5);
+            expect(terminal.screen[6] || "").toBe("");
+            expect(terminal.row).toBe(7);
+
+            process.stdin.emit("data", Buffer.from("n"));
+            jest.advanceTimersByTime(50);
+
+            // The blank row moves down with the hint rather than the display
+            // sliding into it, so it is a row of the region and not the row the
+            // cursor happens to be parked on.
+            expect(hintRow()).toBe(6);
+            expect(terminal.screen[7] || "").toBe("");
+            expect(terminal.row).toBe(8);
+        });
+
         it("should not print the hint when it would wrap", () => {
             withDigitSupport(20, 40);
             const terminal = fakeTerminal();
@@ -537,9 +560,9 @@ describe("app run", () => {
         });
 
         it("should fall back to the plain line when too short", () => {
-            // Five rows of digits, the hint under them and the row the cursor
-            // parks on need seven rows. Six is one too few.
-            withDigitSupport(120, 6);
+            // Five rows of digits, the hint, the blank row under it and the row
+            // the cursor parks on need eight rows. Seven is one too few.
+            withDigitSupport(120, 7);
             fakeTerminal();
             run();
             jest.advanceTimersByTime(50);
@@ -548,7 +571,7 @@ describe("app run", () => {
         });
 
         it("should draw the digits at exactly the height they need", () => {
-            withDigitSupport(120, 7);
+            withDigitSupport(120, 8);
             fakeTerminal();
             run();
             jest.advanceTimersByTime(50);

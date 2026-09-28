@@ -29,6 +29,7 @@ the keys you can press are listed under the timer.
 █ █ █ █ █ █ █ █ █     █ █ █
  █   █     █   █  █   █ ███
   r reset · n new · ␣ pause · esc quit
+
 ```
 
 If the terminal is too small for the digits, the display falls back to a single

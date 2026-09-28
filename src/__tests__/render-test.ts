@@ -197,12 +197,12 @@ describe("render", () => {
     });
 
     describe("digitsHeight", () => {
-        it("should be the glyph height and the hint", () => {
-            expect(digitsHeight(0)).toBe(GLYPH_HEIGHT + 1);
+        it("should be the glyph height, the hint and the blank row", () => {
+            expect(digitsHeight(0)).toBe(GLYPH_HEIGHT + 2);
         });
 
         it("should add a row per other timer", () => {
-            expect(digitsHeight(2)).toBe(GLYPH_HEIGHT + 2 + 1);
+            expect(digitsHeight(2)).toBe(GLYPH_HEIGHT + 2 + 2);
         });
     });
 
