@@ -33,4 +33,4 @@ the keys you can press are listed under the timer.
 ```
 
 If the terminal is too small for the digits, the display falls back to a single
-line of text.
+line of text, with the keys above it and the same blank row underneath.

@@ -66,6 +66,20 @@ function hintFitsOnOneRow() {
     );
 }
 
+// Whether the plain line gets the blank row under it that the block digits have.
+// It has to be a row the display owns, so only a redraw that can travel back up
+// to the line can have it: a terminal that cannot move the cursor keeps the
+// single line it has always had. A terminal one row tall cannot either, because
+// parking the cursor on the row below would scroll a row every frame. An unknown
+// height is left to pad, for the same reason the unknown width prints the hint:
+// there is nothing to measure against.
+function padsBelowLine() {
+    if (!hasDigitSupport()) {
+        return false;
+    }
+    return typeof process.stdout.rows !== "number" || process.stdout.rows > 1;
+}
+
 export function run() {
     const timers = new Timers();
     timers.startCurrentTimer();
@@ -134,10 +148,16 @@ export function run() {
             console.log(renderHint());
             printedHintAbove = true;
         }
-        // The line ends without a newline, which leaves the cursor on its only
-        // row and nothing to travel.
-        process.stdout.write(line);
-        drawnRows = 1;
+        // Two newlines, so the display is two rows like the block digits are:
+        // the line, and the blank row under it. The second one parks the cursor
+        // below both, which is where the wipe measures from, so the blank row is
+        // cleared with the line and nothing can be left on it.
+        //
+        // Without the padding the line ends without a newline, which leaves the
+        // cursor on its only row and nothing to travel.
+        const padded = padsBelowLine();
+        process.stdout.write(padded ? `${line}\n\n` : line);
+        drawnRows = padded ? 2 : 1;
     }
 
     function reclaimHintRow() {
@@ -146,9 +166,12 @@ export function run() {
         }
         // The hint above the plain line is a row above the region, and the
         // region carries a hint of its own under the timer. Clear it along with
-        // the region and start one row higher, so it is not left behind twice.
+        // the region and start above all of it, so it is not left behind twice.
+        // How far up that is depends on how many rows the last frame drew: a
+        // padded line has the blank row under it as well, and stopping on that
+        // one would leave the line and the hint on screen.
         process.stdout.cursorTo(0);
-        process.stdout.moveCursor(0, -1);
+        process.stdout.moveCursor(0, -(drawnRows + 1));
         process.stdout.clearScreenDown();
         drawnRows = 0;
         printedHintAbove = false;

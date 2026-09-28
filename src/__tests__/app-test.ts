@@ -220,12 +220,16 @@ describe("app run", () => {
     // The block digits are made of block characters, the plain line is text, so
     // the two are easy to tell apart without depending on the exact glyphs.
     const expectDigits = () => expectWriteToContainLastTime("█");
-    const expectPlainLine = () =>
+    // The padded form is two newlines: the line, and the blank row under it.
+    // Which one is expected is the point of the argument, since the padding is
+    // only there when the redraw can travel back up to the line.
+    const expectPlainLine = (padded = false) =>
         expectWriteToContainLastTime(
             new RegExp(
                 `^${String.fromCharCode(27)}\\[38;5;214m` +
                     `\\d{2}:\\d{2}\\.\\d{2}` +
-                    `${String.fromCharCode(27)}\\[0m$`,
+                    `${String.fromCharCode(27)}\\[0m` +
+                    `${padded ? "\\n\\n" : ""}$`,
             ),
         );
 
@@ -405,8 +409,9 @@ describe("app run", () => {
             run();
             jest.advanceTimersByTime(50);
             // The hint is printed above the plain line, so the line is on row
-            // one and ends without a newline, leaving the cursor on it.
-            expect(terminal.row).toBe(1);
+            // one, the blank row under it is row two, and the cursor parks
+            // below both of them.
+            expect(terminal.row).toBe(3);
 
             for (let cycle = 0; cycle < 3; cycle++) {
                 withDigitSupport(120, 40);
@@ -428,8 +433,8 @@ describe("app run", () => {
                 jest.advanceTimersByTime(50);
                 // Back to the plain line, wiped off the digits and drawn under
                 // the hint, which is printed again now the region no longer
-                // carries one.
-                expect(terminal.row).toBe(1);
+                // carries one, so the cursor parks below the blank row again.
+                expect(terminal.row).toBe(3);
             }
         });
 
@@ -447,7 +452,9 @@ describe("app run", () => {
                 withDigitSupport(38, 40);
                 terminal.attach();
                 jest.advanceTimersByTime(50);
-                expect(terminal.row).toBe(8);
+                // The hint goes on row seven, the line on row eight, the blank
+                // row under it on row nine, so the cursor parks on row ten.
+                expect(terminal.row).toBe(10);
 
                 withDigitSupport(120, 40);
                 terminal.attach();
@@ -525,6 +532,58 @@ describe("app run", () => {
             expect(terminal.row).toBe(8);
         });
 
+        it("should leave a blank row under the plain line", () => {
+            withDigitSupport(38, 40);
+            const terminal = fakeTerminal();
+            run();
+            jest.advanceTimersByTime(50);
+
+            // The hint is on row zero, so the line is on row one and the blank
+            // row under it is row two, with the cursor parked on row three.
+            const line = () =>
+                terminal.screen.findIndex((row) => row.includes("00:00."));
+            expect(line()).toBe(1);
+            expect(terminal.screen[2] || "").toBe("");
+            expect(terminal.row).toBe(3);
+
+            // The blank row is a row of the display, so it stays put instead of
+            // the display stepping down a row every frame.
+            for (let frame = 0; frame < 3; frame++) {
+                jest.advanceTimersByTime(50);
+                expect(line()).toBe(1);
+                expect(terminal.screen[2] || "").toBe("");
+                expect(terminal.row).toBe(3);
+            }
+        });
+
+        it("should clear the blank row under the plain line", () => {
+            withDigitSupport(38, 40);
+            const terminal = fakeTerminal();
+            run();
+            jest.advanceTimersByTime(50);
+            expect(terminal.row).toBe(3);
+
+            // Anything that writes into the row under the display has to go with
+            // it, the same as the rows of the block digits are.
+            terminal.screen[2] = "something else";
+            jest.advanceTimersByTime(50);
+
+            expect(terminal.screen[2] || "").toBe("");
+            expect(terminal.row).toBe(3);
+        });
+
+        it("should not pad the plain line on a terminal one row tall", () => {
+            // Parking the cursor on the row below the line would scroll the
+            // terminal a row every frame, so a one row terminal keeps the line
+            // unpadded. No model here, so the cursor calls stay observable.
+            withDigitSupport(38, 1);
+            run();
+            jest.advanceTimersByTime(150);
+
+            expectPlainLine();
+            expect(process.stdout.moveCursor).not.toHaveBeenCalled();
+        });
+
         it("should not print the hint when it would wrap", () => {
             withDigitSupport(20, 40);
             const terminal = fakeTerminal();
@@ -532,9 +591,10 @@ describe("app run", () => {
             jest.advanceTimersByTime(50);
 
             // The hint is wider than the terminal, so it would take a second
-            // row the plain line knows nothing about.
+            // row the plain line knows nothing about. The line still gets the
+            // blank row under it, on row one, so the cursor parks on row two.
             expect(consoleSpy).not.toHaveBeenCalled();
-            expect(terminal.row).toBe(0);
+            expect(terminal.row).toBe(2);
             expect(
                 terminal.screen.filter((row) => row.trim().length > 0),
             ).toHaveLength(1);
@@ -547,7 +607,7 @@ describe("app run", () => {
             run();
             jest.advanceTimersByTime(50);
 
-            expectPlainLine();
+            expectPlainLine(true);
         });
 
         it("should draw the digits at exactly the width they need", () => {
@@ -567,7 +627,7 @@ describe("app run", () => {
             run();
             jest.advanceTimersByTime(50);
 
-            expectPlainLine();
+            expectPlainLine(true);
         });
 
         it("should draw the digits at exactly the height they need", () => {
@@ -631,7 +691,7 @@ describe("app run", () => {
             run();
             jest.advanceTimersByTime(1500);
 
-            expectPlainLine();
+            expectPlainLine(true);
         });
 
         it("should not wait when the output is not a terminal", () => {
@@ -644,7 +704,7 @@ describe("app run", () => {
             run();
             jest.advanceTimersByTime(50);
 
-            expectPlainLine();
+            expectPlainLine(true);
         });
     });
 
