@@ -23,11 +23,11 @@ arrows switch between them. The hours are only shown once there are any, and
 the keys you can press are listed under the timer.
 
 ```
-  █   █     █   █    ███ ███
-█ █ █ █ █ █ █ █ █     █ █ █
-█ █ █ █   █ █ █ █     █ ███
-█ █ █ █ █ █ █ █ █     █ █ █
- █   █     █   █  █   █ ███
+   █   █     █  ███   █ █  █
+ █ █  █  █  █  █ █   █ █ █ █
+ █ █  █     █  ███   ███ █ █
+ █ █  █  █  █  █ █     █ █ █
+  █   █     █  ███ █   █  █
   r reset · n new · ␣ pause · esc quit
 
 ```
