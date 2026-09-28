@@ -1,6 +1,6 @@
 {
     "name": "console-stopwatch",
-    "version": "1.4.0",
+    "version": "1.3.3",
     "description": "A simple console stopwatch",
     "main": "index.js",
     "bin": {
@@ -8,7 +8,6 @@
     },
     "files": [
         "dist",
-        "!dist/__tests__",
         "README.md",
         "LICENSE"
     ],
@@ -28,7 +27,6 @@
         "test": "jest",
         "test:watch": "jest --watch",
         "build": "tsc",
-        "prepack": "npm run build",
         "start": "npm run build && ts-node dist/index.js"
     },
     "author": "Jakob Jónasson <jakob.jonasson@gmail.com> (https://github.com/kobbikobb)",
