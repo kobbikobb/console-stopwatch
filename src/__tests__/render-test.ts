@@ -9,6 +9,7 @@ import {
     renderHint,
     renderListedTimer,
     renderPlainLine,
+    renderRegion,
 } from "../render";
 
 const ESC = String.fromCharCode(27);
@@ -197,12 +198,42 @@ describe("render", () => {
     });
 
     describe("digitsHeight", () => {
-        it("should be the glyph height, the hint and the blank row", () => {
-            expect(digitsHeight(0)).toBe(GLYPH_HEIGHT + 2);
+        it("should be the glyph height, the gap, the keys and the blank row", () => {
+            expect(digitsHeight(0)).toBe(GLYPH_HEIGHT + 3);
         });
 
         it("should add a row per other timer", () => {
-            expect(digitsHeight(2)).toBe(GLYPH_HEIGHT + 2 + 2);
+            expect(digitsHeight(2)).toBe(GLYPH_HEIGHT + 3 + 2);
+        });
+    });
+
+    describe("renderRegion", () => {
+        it("should be the timer, the gap, the keys and the blank row", () => {
+            const rows = renderRegion(
+                { milliseconds: 5000, isRunning: true },
+                [],
+            );
+
+            expect(rows).toHaveLength(GLYPH_HEIGHT + 3);
+            expect(stripAnsi(rows[GLYPH_HEIGHT])).toBe("");
+            expect(stripAnsi(rows[GLYPH_HEIGHT + 1])).toContain("esc quit");
+            expect(rows[GLYPH_HEIGHT + 2]).toBe("");
+        });
+
+        it("should put the other timers between the digits and the gap", () => {
+            const rows = renderRegion({ milliseconds: 5000, isRunning: true }, [
+                { milliseconds: 1000, isRunning: true },
+                { milliseconds: 2000, isRunning: false },
+            ]);
+
+            expect(rows).toHaveLength(GLYPH_HEIGHT + 5);
+            expect(stripAnsi(rows[GLYPH_HEIGHT])).toContain("00:01.00");
+            expect(stripAnsi(rows[GLYPH_HEIGHT + 1])).toContain("00:02.00");
+            // The gap stays under the timers, so the keys never ride up against
+            // the last one.
+            expect(rows[GLYPH_HEIGHT + 2]).toBe("");
+            expect(stripAnsi(rows[GLYPH_HEIGHT + 3])).toContain("esc quit");
+            expect(rows[GLYPH_HEIGHT + 4]).toBe("");
         });
     });
 

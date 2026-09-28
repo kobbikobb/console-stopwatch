@@ -59,6 +59,25 @@ export function renderHint() {
     return `${INDENT}${foreground(LISTED_TIMER_COLOR, HINT_TEXT)}`;
 }
 
+// The whole block digit display, top to bottom: the timer, any other timers, a
+// blank row, the keys, and a blank row under them. This is the entire layout, so
+// whoever writes it does not have to know how the display is put together, only
+// that it is a list of rows.
+export function renderRegion(current: TimerSnapshot, others: TimerSnapshot[]) {
+    return [
+        ...renderDigits(current),
+        ...others.map((snapshot) => renderListedTimer(snapshot)),
+        // A blank row between the timers and the keys. This is the padding that
+        // has to be seen: the blank row under the display is only visible once
+        // something is written below it, and nothing is until the app exits.
+        "",
+        renderHint(),
+        // A blank row under the display, so it is not flush against whatever the
+        // terminal has below it.
+        "",
+    ];
+}
+
 // The widest the display gets before the hours run to three digits. A row that
 // wraps takes a second line the cursor arithmetic does not know about, so the
 // gate has to cover it: the digits grow by four columns when the first hour
@@ -78,12 +97,13 @@ export function hintWidth() {
     return INDENT.length + HINT_TEXT.length;
 }
 
-// Five rows of digits, one per listed timer, the hint and the blank row under
-// it. The redraw moves up this many rows to get back to where it started, and
-// every one of them has to fit, otherwise the write scrolls the screen and the
-// redraw lands somewhere the cursor arithmetic cannot describe.
+// Five rows of digits, one per listed timer, the blank row that separates the
+// timers from the keys, the keys and the blank row under them. The redraw moves
+// up this many rows to get back to where it started, and every one of them has
+// to fit, otherwise the write scrolls the screen and the redraw lands somewhere
+// the cursor arithmetic cannot describe.
 export function digitsHeight(listedTimers: number) {
-    return GLYPH_HEIGHT + listedTimers + 2;
+    return GLYPH_HEIGHT + listedTimers + 3;
 }
 
 // Unchanged from the original output, used when the terminal is too small for

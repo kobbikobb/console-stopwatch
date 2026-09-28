@@ -338,9 +338,9 @@ describe("app run", () => {
             jest.advanceTimersByTime(50);
 
             expectDigits();
-            // Five rows of digits, the hint under them and the blank row below
-            // that, with the cursor parked on the row after it.
-            expect(terminal.row).toBe(7);
+            // Five rows of digits, the blank row under them, the hint, and the
+            // blank row under that, with the cursor parked on the row after it.
+            expect(terminal.row).toBe(8);
         });
 
         it("should draw the hint under the timer as part of the display", () => {
@@ -372,7 +372,7 @@ describe("app run", () => {
                 // Nothing is drawn above the region, so it starts on row zero.
                 expect(row).toBe(0);
             }
-            expect(terminal.row).toBe(7);
+            expect(terminal.row).toBe(8);
         });
 
         it("should start the first frame at the left edge", () => {
@@ -398,7 +398,7 @@ describe("app run", () => {
             // The timer that was replaced is stopped, so it is listed as such.
             expectWriteToContainLastTime(/⏸.*00:00\.00/);
             // One more row for the timer that was added.
-            expect(terminal.row).toBe(8);
+            expect(terminal.row).toBe(9);
         });
 
         it("should not stack up rows when the display changes", () => {
@@ -418,7 +418,7 @@ describe("app run", () => {
                 terminal.attach();
                 terminal.writeStarts.length = 0;
                 jest.advanceTimersByTime(50);
-                expect(terminal.row).toBe(7);
+                expect(terminal.row).toBe(8);
                 // The plain line left the cursor at the end of the text, and
                 // moveCursor does not touch the column, so the digits have to
                 // be put back at the left edge or they start part way across.
@@ -444,9 +444,9 @@ describe("app run", () => {
             process.stdout.write("\n".repeat(7));
             run();
             // Seven rows of other output, so the region starts on row seven and
-            // the cursor parks on row fourteen.
+            // the cursor parks on row fifteen.
             jest.advanceTimersByTime(50);
-            expect(terminal.row).toBe(14);
+            expect(terminal.row).toBe(15);
 
             for (let cycle = 0; cycle < 3; cycle++) {
                 withDigitSupport(38, 40);
@@ -517,19 +517,51 @@ describe("app run", () => {
 
             const hintRow = () =>
                 terminal.screen.findIndex((row) => row.includes("esc quit"));
-            expect(hintRow()).toBe(5);
-            expect(terminal.screen[6] || "").toBe("");
-            expect(terminal.row).toBe(7);
+            expect(hintRow()).toBe(6);
+            expect(terminal.screen[7] || "").toBe("");
+            expect(terminal.row).toBe(8);
 
             process.stdin.emit("data", Buffer.from("n"));
             jest.advanceTimersByTime(50);
 
-            // The blank row moves down with the hint rather than the display
+            // The blank row moves down with the keys rather than the display
             // sliding into it, so it is a row of the region and not the row the
             // cursor happens to be parked on.
-            expect(hintRow()).toBe(6);
-            expect(terminal.screen[7] || "").toBe("");
+            expect(hintRow()).toBe(7);
+            expect(terminal.screen[8] || "").toBe("");
+            expect(terminal.row).toBe(9);
+        });
+
+        it("should leave a blank row between the digits and the keys", () => {
+            withDigitSupport(120, 40);
+            const terminal = fakeTerminal();
+            run();
+            jest.advanceTimersByTime(50);
+
+            // This is the padding that can be seen: the row under the digits is
+            // blank and the keys sit below it, so there is a gap to look at.
+            const keysRow = () =>
+                terminal.screen.findIndex((row) => row.includes("esc quit"));
+            const lastDigitRow = () =>
+                terminal.screen.reduce(
+                    (last, row, index) => (row.includes("█") ? index : last),
+                    -1,
+                );
+            expect(lastDigitRow()).toBe(4);
+            expect(terminal.screen[5] || "").toBe("");
+            expect(keysRow()).toBe(6);
             expect(terminal.row).toBe(8);
+            // The gap is a row of the region, so it sits between the timers and
+            // the keys rather than moving with the keys.
+            process.stdin.emit("data", Buffer.from("n"));
+            jest.advanceTimersByTime(50);
+            expect(lastDigitRow()).toBe(4);
+            // The timer that was replaced is listed now, on the row the gap was
+            // on, and the gap is under it.
+            expect(terminal.screen[5]).toContain("⏸");
+            expect(terminal.screen[6] || "").toBe("");
+            expect(keysRow()).toBe(7);
+            expect(terminal.row).toBe(9);
         });
 
         it("should leave a blank row under the plain line", () => {
@@ -620,9 +652,10 @@ describe("app run", () => {
         });
 
         it("should fall back to the plain line when too short", () => {
-            // Five rows of digits, the hint, the blank row under it and the row
-            // the cursor parks on need eight rows. Seven is one too few.
-            withDigitSupport(120, 7);
+            // Five rows of digits, the blank row under them, the keys, the blank
+            // row under those and the row the cursor parks on need nine rows.
+            // Eight is one too few.
+            withDigitSupport(120, 8);
             fakeTerminal();
             run();
             jest.advanceTimersByTime(50);
@@ -631,7 +664,7 @@ describe("app run", () => {
         });
 
         it("should draw the digits at exactly the height they need", () => {
-            withDigitSupport(120, 8);
+            withDigitSupport(120, 9);
             fakeTerminal();
             run();
             jest.advanceTimersByTime(50);
@@ -711,6 +744,20 @@ describe("app run", () => {
     describe("the window title", () => {
         it("should show the elapsed time without hundredths", () => {
             withDigitSupport(120, 40);
+            fakeTerminal();
+            run();
+            jest.advanceTimersByTime(50);
+
+            expect(write).toHaveBeenCalledWith(
+                expect.stringContaining("⏱ 00:00"),
+            );
+        });
+
+        it("should mirror the time whichever way it is displayed", () => {
+            // Thirty-eight columns is too narrow for the block digits, so the
+            // plain line is the live display. The title is the app's, not a
+            // display's, so it is mirrored either way.
+            withDigitSupport(38, 40);
             fakeTerminal();
             run();
             jest.advanceTimersByTime(50);
