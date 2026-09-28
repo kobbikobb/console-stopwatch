@@ -1,4 +1,11 @@
+import fs from "fs";
+import os from "os";
+import path from "path";
 import { run } from "../app";
+import { GLYPH_HEIGHT } from "../blockDigits";
+import { colorFor } from "../render";
+
+const ESC = String.fromCharCode(27);
 
 describe("app run", () => {
     const consoleSpy = jest.spyOn(console, "log");
@@ -17,6 +24,23 @@ describe("app run", () => {
     const originalColumns = process.stdout.columns;
     const originalRows = process.stdout.rows;
     const originalIsTTY = process.stdout.isTTY;
+    const originalConfigHome = process.env.XDG_CONFIG_HOME;
+
+    // The display the user last chose is remembered in a file, so every test
+    // gets a directory of its own to read and write. Otherwise a test that
+    // presses d writes to the real home directory, and a test that runs after
+    // anyone has used the app starts on whatever they last chose.
+    let settingsHome = "";
+
+    const settingsFile = () =>
+        path.join(settingsHome, "console-stopwatch", "settings.json");
+
+    const writeSettings = (contents: string) => {
+        fs.mkdirSync(path.dirname(settingsFile()), { recursive: true });
+        fs.writeFileSync(settingsFile(), contents);
+    };
+
+    const readSettings = () => fs.readFileSync(settingsFile(), "utf8");
 
     // A terminal that keeps track of where the cursor is and what is on the
     // screen, so a redraw can be checked by where the next write lands and by
@@ -168,6 +192,10 @@ describe("app run", () => {
         withoutDigitSupport();
         clearSize();
         process.env.TERM = originalTerm;
+        settingsHome = fs.mkdtempSync(
+            path.join(os.tmpdir(), "stopwatch-test-"),
+        );
+        process.env.XDG_CONFIG_HOME = settingsHome;
         // The hint line goes out through console.log, so it has to reach the
         // fake terminal too or the cursor model cannot see the row it takes.
         consoleSpy.mockImplementation((...args: unknown[]) => {
@@ -176,6 +204,7 @@ describe("app run", () => {
     });
 
     afterEach(() => {
+        fs.rmSync(settingsHome, { recursive: true, force: true });
         consoleSpy.mockReset();
         exitSpy.mockReset();
         setRawMode.mockReset();
@@ -191,6 +220,10 @@ describe("app run", () => {
         process.stdin.pause();
         process.stdin.removeAllListeners();
         process.env.TERM = originalTerm;
+        delete process.env.XDG_CONFIG_HOME;
+        if (originalConfigHome !== undefined) {
+            process.env.XDG_CONFIG_HOME = originalConfigHome;
+        }
         Object.defineProperty(process.stdout, "columns", {
             value: originalColumns,
             configurable: true,
@@ -222,16 +255,62 @@ describe("app run", () => {
     const expectDigits = () => expectWriteToContainLastTime("█");
     // The padded form is two newlines: the line, and the blank row under it.
     // Which one is expected is the point of the argument, since the padding is
-    // only there when the redraw can travel back up to the line.
-    const expectPlainLine = (padded = false) =>
+    // only there when the redraw can travel back up to the line. A stopped timer
+    // is drawn in the paused colour, which is the second argument.
+    const expectPlainLine = (padded = false, running = true) =>
         expectWriteToContainLastTime(
             new RegExp(
-                `^${String.fromCharCode(27)}\\[38;5;214m` +
+                `^${String.fromCharCode(27)}\\[38;5;${colorFor(running)}m` +
                     `\\d{2}:\\d{2}\\.\\d{2}` +
                     `${String.fromCharCode(27)}\\[0m` +
                     `${padded ? "\\n\\n" : ""}$`,
             ),
         );
+
+    describe("a stopped timer", () => {
+        // The block digits always greyed a stopped timer, so switching to the
+        // plain line with d used to show the same stopped timer in orange. The
+        // two displays have to agree or the key looks like it changed something
+        // it did not.
+        it("should grey the plain line, as the block digits already did", () => {
+            withDigitSupport(120, 5);
+            fakeTerminal();
+            run();
+            jest.advanceTimersByTime(50);
+            expectPlainLine(true);
+
+            process.stdin.emit("data", Buffer.from(" "));
+            jest.advanceTimersByTime(50);
+
+            expectPlainLine(true, false);
+        });
+
+        it("should still grey the block digits", () => {
+            withDigitSupport(120, 40);
+            fakeTerminal();
+            run();
+            process.stdin.emit("data", Buffer.from(" "));
+            jest.advanceTimersByTime(50);
+
+            // The menu is dim as well, so the digit rows are looked at rather
+            // than the whole write.
+            const rows = String(
+                write.mock.calls[write.mock.calls.length - 1][0],
+            ).split("\n");
+            rows.slice(2, 2 + GLYPH_HEIGHT).forEach((row) => {
+                expect(row).toContain(`${ESC}[38;5;${colorFor(false)}m`);
+            });
+        });
+
+        it("should not grey a running timer on either display", () => {
+            withDigitSupport(120, 5);
+            fakeTerminal();
+            run();
+            jest.advanceTimersByTime(50);
+
+            expectPlainLine(true);
+        });
+    });
 
     it("should write a hint line above the plain line", () => {
         run();
@@ -295,10 +374,20 @@ describe("app run", () => {
 
     it("should pause timer", () => {
         run();
-        process.stdin.emit("data", Buffer.from("x"));
+        process.stdin.emit("data", Buffer.from(" "));
         jest.advanceTimersByTime(100);
 
         expectWriteToContainLastTime("00:00.00");
+    });
+
+    it("should ignore a key it has no use for", () => {
+        // Every key that was not one of the timer keys used to be treated as a
+        // pause, so a key aimed at nothing silently stopped the clock.
+        run();
+        process.stdin.emit("data", Buffer.from("x"));
+        jest.advanceTimersByTime(100);
+
+        expectWriteToContainLastTime("00:00.10");
     });
 
     it("should close the application when pressing ctrl+c", () => {
@@ -338,27 +427,36 @@ describe("app run", () => {
             jest.advanceTimersByTime(50);
 
             expectDigits();
-            // Five rows of digits, the blank row under them, the hint, and the
-            // blank row under that, with the cursor parked on the row after it.
-            expect(terminal.row).toBe(8);
+            // The menu, the gap under it, five rows of digits, the gap under the
+            // timer, the blank row under that, and the row the cursor parks on.
+            expect(terminal.row).toBe(9);
         });
 
-        it("should draw the hint under the timer as part of the display", () => {
+        it("should draw the menu at the top as part of the display", () => {
             withDigitSupport(120, 40);
             fakeTerminal();
             run();
             jest.advanceTimersByTime(50);
 
-            // The hint is a row of the region rather than a line printed once
-            // above, so it comes after the digits in the same write and is
+            // The menu is a row of the region rather than a line printed once
+            // above, so it comes before the digits in the same write and is
             // redrawn with them.
             const lastWrite = String(
                 write.mock.calls[write.mock.calls.length - 1][0],
             );
             const rows = lastWrite.split("\n").filter((row) => row.length > 0);
-            expect(rows[0]).toContain("█");
-            expect(rows[rows.length - 1]).toContain("esc quit");
+            expect(rows[0]).toContain("esc quit");
+            expect(rows[rows.length - 1]).toContain("█");
             expect(consoleSpy).not.toHaveBeenCalled();
+        });
+
+        it("should name the key that switches display in the menu", () => {
+            withDigitSupport(120, 40);
+            const terminal = fakeTerminal();
+            run();
+            jest.advanceTimersByTime(50);
+
+            expect(terminal.screen[0]).toContain("d display");
         });
 
         it("should keep the digits on the same rows every frame", () => {
@@ -372,7 +470,7 @@ describe("app run", () => {
                 // Nothing is drawn above the region, so it starts on row zero.
                 expect(row).toBe(0);
             }
-            expect(terminal.row).toBe(8);
+            expect(terminal.row).toBe(9);
         });
 
         it("should start the first frame at the left edge", () => {
@@ -398,43 +496,43 @@ describe("app run", () => {
             // The timer that was replaced is stopped, so it is listed as such.
             expectWriteToContainLastTime(/⏸.*00:00\.00/);
             // One more row for the timer that was added.
-            expect(terminal.row).toBe(9);
+            expect(terminal.row).toBe(10);
         });
 
         it("should not stack up rows when the display changes", () => {
-            // 38 columns is one too few for the digits, and exactly enough for
-            // the hint, so the fallback prints it above the line.
-            withDigitSupport(38, 40);
+            // Five rows is far too few for the digits, and wide enough for the
+            // menu, so the fallback prints the menu above the line.
+            withDigitSupport(120, 5);
             const terminal = fakeTerminal();
             run();
             jest.advanceTimersByTime(50);
-            // The hint is printed above the plain line, so the line is on row
-            // one, the blank row under it is row two, and the cursor parks
-            // below both of them.
-            expect(terminal.row).toBe(3);
+            // The menu is on row zero, the gap under it row one, the line row two
+            // and the blank row under that row three, so the cursor parks below
+            // all four.
+            expect(terminal.row).toBe(4);
 
             for (let cycle = 0; cycle < 3; cycle++) {
                 withDigitSupport(120, 40);
                 terminal.attach();
                 terminal.writeStarts.length = 0;
                 jest.advanceTimersByTime(50);
-                expect(terminal.row).toBe(8);
+                expect(terminal.row).toBe(9);
                 // The plain line left the cursor at the end of the text, and
                 // moveCursor does not touch the column, so the digits have to
                 // be put back at the left edge or they start part way across.
-                // The hint the fallback left above is reclaimed, so the region
-                // starts on row zero rather than below it.
+                // The two rows the fallback left above the line are reclaimed, so
+                // the region starts on row zero rather than below it.
                 expect(
                     terminal.writeStarts[terminal.writeStarts.length - 1],
                 ).toEqual({ row: 0, column: 0 });
 
-                withDigitSupport(38, 40);
+                withDigitSupport(120, 5);
                 terminal.attach();
                 jest.advanceTimersByTime(50);
                 // Back to the plain line, wiped off the digits and drawn under
-                // the hint, which is printed again now the region no longer
+                // the menu, which is printed again now the region no longer
                 // carries one, so the cursor parks below the blank row again.
-                expect(terminal.row).toBe(3);
+                expect(terminal.row).toBe(4);
             }
         });
 
@@ -444,25 +542,26 @@ describe("app run", () => {
             process.stdout.write("\n".repeat(7));
             run();
             // Seven rows of other output, so the region starts on row seven and
-            // the cursor parks on row fifteen.
+            // the nine rows of the display park the cursor on row sixteen.
             jest.advanceTimersByTime(50);
-            expect(terminal.row).toBe(15);
+            expect(terminal.row).toBe(16);
 
             for (let cycle = 0; cycle < 3; cycle++) {
-                withDigitSupport(38, 40);
+                withDigitSupport(120, 5);
                 terminal.attach();
                 jest.advanceTimersByTime(50);
-                // The hint goes on row seven, the line on row eight, the blank
-                // row under it on row nine, so the cursor parks on row ten.
-                expect(terminal.row).toBe(10);
+                // The menu goes on row seven, the gap row eight, the line row
+                // nine, the blank row under it row ten, so the cursor parks on
+                // row eleven.
+                expect(terminal.row).toBe(11);
 
                 withDigitSupport(120, 40);
                 terminal.attach();
                 terminal.writeStarts.length = 0;
                 jest.advanceTimersByTime(50);
                 // Back on the same row, not a row higher and not a row lower.
-                // The hint the fallback printed is one row above the line, and
-                // reclaiming it puts the region back on row seven.
+                // The two rows the fallback printed above the line are reclaimed,
+                // which puts the region back on row seven.
                 expect(
                     terminal.writeStarts[terminal.writeStarts.length - 1].row,
                 ).toBe(7);
@@ -476,13 +575,13 @@ describe("app run", () => {
             jest.advanceTimersByTime(50);
             expect(terminal.screen.some((row) => row.includes("█"))).toBe(true);
 
-            withDigitSupport(38, 40);
+            withDigitSupport(120, 5);
             terminal.attach();
             jest.advanceTimersByTime(50);
 
             // The rows the region used to own are cleared rather than left
             // showing the last frame of the digits, which a cursor position
-            // cannot tell. The hint above the line is the only thing left.
+            // cannot tell. The menu above the line is the only thing left.
             const left = terminal.screen.filter((row) => row.includes("█"));
             expect(left).toHaveLength(0);
             expect(
@@ -491,7 +590,7 @@ describe("app run", () => {
         });
 
         it("should leave nothing of the digits behind when they come back", () => {
-            withDigitSupport(38, 40);
+            withDigitSupport(120, 5);
             const terminal = fakeTerminal();
             run();
             jest.advanceTimersByTime(50);
@@ -500,108 +599,107 @@ describe("app run", () => {
             terminal.attach();
             jest.advanceTimersByTime(50);
 
-            // The hint the fallback printed above the line is gone, and the
-            // display has a hint of its own under the timer, so the screen
+            // The menu and the gap the fallback printed above the line are gone,
+            // and the display has a menu of its own at the top, so the screen
             // holds the region and nothing else.
-            expect(terminal.screen[0]).toContain("█");
+            expect(terminal.screen[2]).toContain("█");
             expect(
                 terminal.screen.filter((row) => row.trim().length > 0),
             ).toHaveLength(6);
         });
 
-        it("should leave a blank row under the keys", () => {
+        it("should leave a blank row under the display", () => {
             withDigitSupport(120, 40);
             const terminal = fakeTerminal();
             run();
             jest.advanceTimersByTime(50);
 
-            const hintRow = () =>
-                terminal.screen.findIndex((row) => row.includes("esc quit"));
-            expect(hintRow()).toBe(6);
+            // The menu is row zero, the digits rows two to six, the gap under
+            // the timer row seven and the blank row under the display row eight.
             expect(terminal.screen[7] || "").toBe("");
-            expect(terminal.row).toBe(8);
+            expect(terminal.screen[8] || "").toBe("");
+            expect(terminal.row).toBe(9);
 
             process.stdin.emit("data", Buffer.from("n"));
             jest.advanceTimersByTime(50);
 
-            // The blank row moves down with the keys rather than the display
-            // sliding into it, so it is a row of the region and not the row the
-            // cursor happens to be parked on.
-            expect(hintRow()).toBe(7);
-            expect(terminal.screen[8] || "").toBe("");
-            expect(terminal.row).toBe(9);
+            // The blank row moves down with the listed timer rather than the
+            // display sliding into it, so it is a row of the region and not the
+            // row the cursor happens to be parked on.
+            expect(terminal.screen[8]).toContain("⏸");
+            expect(terminal.screen[9] || "").toBe("");
+            expect(terminal.row).toBe(10);
         });
 
-        it("should leave a blank row between the digits and the keys", () => {
+        it("should keep a blank row under the timer when one is added", () => {
             withDigitSupport(120, 40);
             const terminal = fakeTerminal();
             run();
             jest.advanceTimersByTime(50);
 
             // This is the padding that can be seen: the row under the digits is
-            // blank and the keys sit below it, so there is a gap to look at.
-            const keysRow = () =>
-                terminal.screen.findIndex((row) => row.includes("esc quit"));
+            // blank, so there is a gap to look at.
             const lastDigitRow = () =>
                 terminal.screen.reduce(
                     (last, row, index) => (row.includes("█") ? index : last),
                     -1,
                 );
-            expect(lastDigitRow()).toBe(4);
-            expect(terminal.screen[5] || "").toBe("");
-            expect(keysRow()).toBe(6);
-            expect(terminal.row).toBe(8);
-            // The gap is a row of the region, so it sits between the timers and
-            // the keys rather than moving with the keys.
+            expect(lastDigitRow()).toBe(6);
+            expect(terminal.screen[7] || "").toBe("");
+            expect(terminal.row).toBe(9);
+
             process.stdin.emit("data", Buffer.from("n"));
             jest.advanceTimersByTime(50);
-            expect(lastDigitRow()).toBe(4);
-            // The timer that was replaced is listed now, on the row the gap was
-            // on, and the gap is under it.
-            expect(terminal.screen[5]).toContain("⏸");
-            expect(terminal.screen[6] || "").toBe("");
-            expect(keysRow()).toBe(7);
-            expect(terminal.row).toBe(9);
+
+            // The gap stays directly under the timer. It used to sit above the
+            // keys instead, where a listed timer took its place and the padding
+            // disappeared the moment a new timer was added.
+            expect(lastDigitRow()).toBe(6);
+            expect(terminal.screen[7] || "").toBe("");
+            expect(terminal.screen[8]).toContain("⏸");
+            expect(terminal.row).toBe(10);
         });
 
         it("should leave a blank row under the plain line", () => {
-            withDigitSupport(38, 40);
+            withDigitSupport(120, 5);
             const terminal = fakeTerminal();
             run();
             jest.advanceTimersByTime(50);
 
-            // The hint is on row zero, so the line is on row one and the blank
-            // row under it is row two, with the cursor parked on row three.
+            // The menu is on row zero, the gap under it row one, the line row
+            // two and the blank row under it row three, with the cursor parked
+            // on row four.
             const line = () =>
                 terminal.screen.findIndex((row) => row.includes("00:00."));
-            expect(line()).toBe(1);
-            expect(terminal.screen[2] || "").toBe("");
-            expect(terminal.row).toBe(3);
+            expect(line()).toBe(2);
+            expect(terminal.screen[1] || "").toBe("");
+            expect(terminal.screen[3] || "").toBe("");
+            expect(terminal.row).toBe(4);
 
             // The blank row is a row of the display, so it stays put instead of
             // the display stepping down a row every frame.
             for (let frame = 0; frame < 3; frame++) {
                 jest.advanceTimersByTime(50);
-                expect(line()).toBe(1);
-                expect(terminal.screen[2] || "").toBe("");
-                expect(terminal.row).toBe(3);
+                expect(line()).toBe(2);
+                expect(terminal.screen[3] || "").toBe("");
+                expect(terminal.row).toBe(4);
             }
         });
 
         it("should clear the blank row under the plain line", () => {
-            withDigitSupport(38, 40);
+            withDigitSupport(120, 5);
             const terminal = fakeTerminal();
             run();
             jest.advanceTimersByTime(50);
-            expect(terminal.row).toBe(3);
+            expect(terminal.row).toBe(4);
 
             // Anything that writes into the row under the display has to go with
             // it, the same as the rows of the block digits are.
-            terminal.screen[2] = "something else";
+            terminal.screen[3] = "something else";
             jest.advanceTimersByTime(50);
 
-            expect(terminal.screen[2] || "").toBe("");
-            expect(terminal.row).toBe(3);
+            expect(terminal.screen[3] || "").toBe("");
+            expect(terminal.row).toBe(4);
         });
 
         it("should not pad the plain line on a terminal one row tall", () => {
@@ -633,8 +731,9 @@ describe("app run", () => {
         });
 
         it("should fall back to the plain line when too narrow", () => {
-            // The display needs 39 columns, and 38 is one too few.
-            withDigitSupport(38, 40);
+            // The menu is the widest row and it names the key that switches
+            // display, so the display needs 50 columns and 49 is one too few.
+            withDigitSupport(49, 40);
             fakeTerminal();
             run();
             jest.advanceTimersByTime(50);
@@ -643,7 +742,7 @@ describe("app run", () => {
         });
 
         it("should draw the digits at exactly the width they need", () => {
-            withDigitSupport(39, 40);
+            withDigitSupport(50, 40);
             fakeTerminal();
             run();
             jest.advanceTimersByTime(50);
@@ -652,10 +751,10 @@ describe("app run", () => {
         });
 
         it("should fall back to the plain line when too short", () => {
-            // Five rows of digits, the blank row under them, the keys, the blank
-            // row under those and the row the cursor parks on need nine rows.
-            // Eight is one too few.
-            withDigitSupport(120, 8);
+            // The menu, the gap under it, five rows of digits, the gap under the
+            // timer, the blank row under those and the row the cursor parks on
+            // need ten rows. Nine is one too few.
+            withDigitSupport(120, 9);
             fakeTerminal();
             run();
             jest.advanceTimersByTime(50);
@@ -664,7 +763,7 @@ describe("app run", () => {
         });
 
         it("should draw the digits at exactly the height they need", () => {
-            withDigitSupport(120, 9);
+            withDigitSupport(120, 10);
             fakeTerminal();
             run();
             jest.advanceTimersByTime(50);
@@ -737,6 +836,166 @@ describe("app run", () => {
             run();
             jest.advanceTimersByTime(50);
 
+            expectPlainLine(true);
+        });
+    });
+
+    describe("the display toggle", () => {
+        const ROOMY = { columns: 120, rows: 40 };
+
+        it("should draw the block digits when nothing has been chosen", () => {
+            // The default is the display the app has always picked for itself, so
+            // a first run looks like the last one.
+            withDigitSupport(ROOMY.columns, ROOMY.rows);
+            fakeTerminal();
+            run();
+            jest.advanceTimersByTime(50);
+
+            expectDigits();
+        });
+
+        it("should switch to the plain line when d is pressed", () => {
+            withDigitSupport(ROOMY.columns, ROOMY.rows);
+            const terminal = fakeTerminal();
+            run();
+            jest.advanceTimersByTime(50);
+            expectDigits();
+
+            process.stdin.emit("data", Buffer.from("d"));
+            jest.advanceTimersByTime(50);
+
+            expectPlainLine(true);
+            // The digits are gone rather than left under the line, so switching
+            // is a handover and not a second display drawn on top of the first.
+            expect(
+                terminal.screen.filter((row) => row.includes("█")),
+            ).toHaveLength(0);
+        });
+
+        it("should switch back to the block digits when d is pressed again", () => {
+            withDigitSupport(ROOMY.columns, ROOMY.rows);
+            fakeTerminal();
+            run();
+            jest.advanceTimersByTime(50);
+
+            process.stdin.emit("data", Buffer.from("d"));
+            jest.advanceTimersByTime(50);
+            expectPlainLine(true);
+
+            process.stdin.emit("data", Buffer.from("d"));
+            jest.advanceTimersByTime(50);
+
+            expectDigits();
+        });
+
+        it("should remember the display it was switched to", () => {
+            withDigitSupport(ROOMY.columns, ROOMY.rows);
+            fakeTerminal();
+            run();
+            jest.advanceTimersByTime(50);
+
+            process.stdin.emit("data", Buffer.from("d"));
+            jest.advanceTimersByTime(50);
+
+            // Written when the key is pressed rather than on the way out, because
+            // esc ends the process and a choice made just before pressing it
+            // should not be the one that is lost.
+            expect(JSON.parse(readSettings())).toEqual({ display: "standard" });
+        });
+
+        it("should start on the plain line when that is what it was left on", () => {
+            writeSettings(JSON.stringify({ display: "standard" }));
+            withDigitSupport(ROOMY.columns, ROOMY.rows);
+            fakeTerminal();
+            run();
+            jest.advanceTimersByTime(50);
+
+            // A terminal this size could draw the digits, so the only reason to
+            // see the plain line is that it was asked for last time.
+            expectPlainLine(true);
+        });
+
+        it("should stay on the plain line when the terminal grows", () => {
+            writeSettings(JSON.stringify({ display: "standard" }));
+            withDigitSupport(50, 10);
+            const terminal = fakeTerminal();
+            run();
+            jest.advanceTimersByTime(50);
+            expectPlainLine(true);
+
+            withDigitSupport(ROOMY.columns, ROOMY.rows);
+            terminal.attach();
+            jest.advanceTimersByTime(50);
+
+            // Two states, not three: a terminal big enough for the digits is no
+            // longer enough on its own to bring them back.
+            expectPlainLine(true);
+        });
+
+        it("should start on the block digits when that is what it was left on", () => {
+            writeSettings(JSON.stringify({ display: "advanced" }));
+            withDigitSupport(ROOMY.columns, ROOMY.rows);
+            fakeTerminal();
+            run();
+            jest.advanceTimersByTime(50);
+
+            expectDigits();
+        });
+
+        it("should ignore a display it does not recognise", () => {
+            writeSettings(
+                JSON.stringify({ display: "something else", extra: 1 }),
+            );
+            withDigitSupport(ROOMY.columns, ROOMY.rows);
+            fakeTerminal();
+            run();
+            jest.advanceTimersByTime(50);
+
+            // A file someone has edited by hand reads as nothing remembered, so
+            // the default applies rather than a display that is not one of the
+            // two.
+            expectDigits();
+        });
+
+        it("should ignore a settings file that is not readable", () => {
+            writeSettings("this is not json");
+            withDigitSupport(ROOMY.columns, ROOMY.rows);
+            fakeTerminal();
+            run();
+            jest.advanceTimersByTime(50);
+
+            expectDigits();
+        });
+
+        it("should still switch when the settings cannot be written", () => {
+            // A read only home directory should cost the remembering, not the
+            // stopwatch, so nothing is reported and the display still changes.
+            withDigitSupport(ROOMY.columns, ROOMY.rows);
+            fs.mkdirSync(path.join(settingsHome, "console-stopwatch"), {
+                recursive: true,
+            });
+            fs.mkdirSync(
+                path.join(settingsHome, "console-stopwatch", "settings.json"),
+            );
+            fakeTerminal();
+            run();
+            jest.advanceTimersByTime(50);
+
+            process.stdin.emit("data", Buffer.from("d"));
+            jest.advanceTimersByTime(50);
+
+            expectPlainLine(true);
+        });
+
+        it("should fall back to the plain line when the terminal is too small", () => {
+            writeSettings(JSON.stringify({ display: "advanced" }));
+            withDigitSupport(120, 5);
+            fakeTerminal();
+            run();
+            jest.advanceTimersByTime(50);
+
+            // The measurement still gets the last word, so a remembered choice
+            // the terminal cannot honour does not draw something it cannot draw.
             expectPlainLine(true);
         });
     });

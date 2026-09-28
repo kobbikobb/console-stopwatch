@@ -159,9 +159,11 @@ describe("render", () => {
         it("should name every key", () => {
             const hint = stripAnsi(renderHint());
 
-            ["r reset", "n new", "pause", "esc quit"].forEach((key) => {
-                expect(hint).toContain(key);
-            });
+            ["r reset", "n new", "d display", "pause", "esc quit"].forEach(
+                (key) => {
+                    expect(hint).toContain(key);
+                },
+            );
         });
     });
 
@@ -183,63 +185,102 @@ describe("render", () => {
             expect(over).toBe(under);
         });
 
-        it("should be wider than the hint row", () => {
-            // A row wider than the gate wraps, and the cursor arithmetic does
-            // not know about the extra line.
-            expect(hintWidth()).toBeLessThanOrEqual(digitsRequiredWidth(0));
+        it("should cover the hint row at any elapsed time", () => {
+            // A row wider than the gate wraps, and the cursor arithmetic does not
+            // know about the extra line. The menu is what sets the gate now, since
+            // naming the key that switches display made it wider than the timer
+            // ever gets, and it still has to fit once the hours are three digits.
+            expect(digitsRequiredWidth(0)).toBeGreaterThanOrEqual(hintWidth());
+            expect(
+                digitsRequiredWidth(100 * 60 * 60 * 1000),
+            ).toBeGreaterThanOrEqual(hintWidth());
         });
 
-        it("should grow past 99 hours", () => {
-            const under = digitsRequiredWidth(99 * 60 * 60 * 1000);
-            const over = digitsRequiredWidth(100 * 60 * 60 * 1000);
+        it("should be set by the menu, which is now the widest row", () => {
+            // The menu grew wider than the timer when it started naming the key
+            // that switches display, and the gate follows the widest row, so a
+            // terminal that fits the menu fits the timer too.
+            expect(digitsRequiredWidth(0)).toBe(hintWidth());
+        });
 
-            expect(over).toBe(under + 4);
+        it("should still cover three digit hours", () => {
+            // Growing the gate at 99 hours was how the hours were stopped from
+            // wrapping. The menu is wider than three digit hours now, so the gate
+            // does not have to grow for it, but the digits still have to fit
+            // inside what it does allow.
+            const milliseconds = 100 * 60 * 60 * 1000;
+            const drawn = renderDigits({ milliseconds, isRunning: true });
+
+            expect(digitsRequiredWidth(milliseconds)).toBeGreaterThanOrEqual(
+                stripAnsi(drawn[0]).length,
+            );
         });
     });
 
     describe("digitsHeight", () => {
-        it("should be the glyph height, the gap, the keys and the blank row", () => {
-            expect(digitsHeight(0)).toBe(GLYPH_HEIGHT + 3);
+        it("should be the menu, two gaps, the glyph height and the blank row", () => {
+            expect(digitsHeight(0)).toBe(GLYPH_HEIGHT + 4);
         });
 
         it("should add a row per other timer", () => {
-            expect(digitsHeight(2)).toBe(GLYPH_HEIGHT + 3 + 2);
+            expect(digitsHeight(2)).toBe(GLYPH_HEIGHT + 4 + 2);
         });
     });
 
     describe("renderRegion", () => {
-        it("should be the timer, the gap, the keys and the blank row", () => {
-            const rows = renderRegion(
-                { milliseconds: 5000, isRunning: true },
-                [],
-            );
+        const current = { milliseconds: 5000, isRunning: true };
+        const digits = renderDigits(current);
 
-            expect(rows).toHaveLength(GLYPH_HEIGHT + 3);
-            expect(stripAnsi(rows[GLYPH_HEIGHT])).toBe("");
-            expect(stripAnsi(rows[GLYPH_HEIGHT + 1])).toContain("esc quit");
+        it("should be the menu, a gap, the timer, a gap and a blank row", () => {
+            const rows = renderRegion(current, []);
+
+            expect(rows).toHaveLength(GLYPH_HEIGHT + 4);
+            expect(stripAnsi(rows[0])).toContain("esc quit");
+            expect(rows[1]).toBe("");
+            // The five digit rows come next, with nothing else between them.
+            for (let row = 0; row < GLYPH_HEIGHT; row++) {
+                expect(rows[2 + row]).toBe(digits[row]);
+            }
+            // The gap under the timer, and the blank row under the display.
             expect(rows[GLYPH_HEIGHT + 2]).toBe("");
+            expect(rows[GLYPH_HEIGHT + 3]).toBe("");
         });
 
-        it("should put the other timers between the digits and the gap", () => {
-            const rows = renderRegion({ milliseconds: 5000, isRunning: true }, [
+        it("should keep the gap under the timer when others are listed", () => {
+            const rows = renderRegion(current, [
                 { milliseconds: 1000, isRunning: true },
                 { milliseconds: 2000, isRunning: false },
             ]);
 
-            expect(rows).toHaveLength(GLYPH_HEIGHT + 5);
-            expect(stripAnsi(rows[GLYPH_HEIGHT])).toContain("00:01.00");
-            expect(stripAnsi(rows[GLYPH_HEIGHT + 1])).toContain("00:02.00");
-            // The gap stays under the timers, so the keys never ride up against
-            // the last one.
+            expect(rows).toHaveLength(GLYPH_HEIGHT + 6);
+            expect(stripAnsi(rows[0])).toContain("esc quit");
+            expect(rows[1]).toBe("");
+            // The gap stays directly under the timer, so asking for a new one
+            // does not take the padding away. It used to sit above the keys,
+            // where a listed timer took its place instead.
             expect(rows[GLYPH_HEIGHT + 2]).toBe("");
-            expect(stripAnsi(rows[GLYPH_HEIGHT + 3])).toContain("esc quit");
-            expect(rows[GLYPH_HEIGHT + 4]).toBe("");
+            expect(stripAnsi(rows[GLYPH_HEIGHT + 3])).toContain("00:01.00");
+            expect(stripAnsi(rows[GLYPH_HEIGHT + 4])).toContain("00:02.00");
+            expect(rows[GLYPH_HEIGHT + 5]).toBe("");
         });
     });
 
     describe("renderPlainLine", () => {
         it("should be the same output as before this change", () => {
-            expect(renderPlainLine(50)).toBe("\x1b[38;5;214m00:00.05\x1b[0m");
+            expect(renderPlainLine({ milliseconds: 50, isRunning: true })).toBe(
+                "\x1b[38;5;214m00:00.05\x1b[0m",
+            );
+        });
+
+        it("should grey a stopped timer, as the block digits do", () => {
+            // It used to be the running colour whatever the state, so the same
+            // stopped timer was orange on the line and grey in the digits.
+            expect(
+                renderPlainLine({ milliseconds: 50, isRunning: false }),
+            ).not.toBe(renderPlainLine({ milliseconds: 50, isRunning: true }));
+            expect(
+                renderPlainLine({ milliseconds: 50, isRunning: false }),
+            ).toBe(`\x1b[38;5;${colorFor(false)}m00:00.05\x1b[0m`);
         });
     });
 });

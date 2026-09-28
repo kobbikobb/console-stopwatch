@@ -39,14 +39,14 @@ function keysFitOnOneRow() {
     );
 }
 
-// Whether the plain line gets the blank row under it that the block digits have.
-// It has to be a row the display owns, so only a redraw that can travel back up
-// to the line can have it: a terminal that cannot move the cursor keeps the
-// single line it has always had. A terminal one row tall cannot either, because
-// parking the cursor on the row below would scroll a row every frame. An unknown
-// height is left to pad, for the same reason an unknown width prints the keys:
+// Whether the plain line gets the blank rows above and below it that the block
+// digits have. They have to be rows the display owns, so only a redraw that can
+// travel back up to the line can have them: a terminal that cannot move the
+// cursor keeps the single line it has always had. A terminal one row tall cannot
+// either, because every extra row scrolls the screen a row per frame. An unknown
+// height is left to pad, for the same reason an unknown width prints the menu:
 // there is nothing to measure against.
-function padsBelowLine() {
+function padsAroundLine() {
     if (!hasDigitSupport()) {
         return false;
     }
@@ -112,24 +112,25 @@ function createRegion() {
             drawnRows = 1;
         },
 
-        // Clear the region and the row above it, and start from there. For a
-        // display that leaves a row above itself which the display taking over
+        // Clear the region and the rows above it, and start from there. For a
+        // display that leaves rows above itself which the display taking over
         // knows nothing about. How far up that is depends on how many rows the
-        // last frame drew, so it cannot be a fixed offset: a padded line has the
-        // blank row under it as well, and stopping on that one would leave the
-        // line and the keys behind.
-        clearIncludingRowAbove() {
+        // last frame drew and how many the display left above them, so it cannot
+        // be a fixed offset: a padded line has the blank row above and below it
+        // as well, and stopping on the blank one would leave the menu and the
+        // line behind.
+        clearIncludingRowAbove(rowsAbove: number) {
             process.stdout.cursorTo(0);
-            process.stdout.moveCursor(0, -(drawnRows + 1));
+            process.stdout.moveCursor(0, -(drawnRows + rowsAbove));
             process.stdout.clearScreenDown();
             drawnRows = 0;
         },
     };
 }
 
-// The block digits. Everything the display is made of is one region - the timer,
-// the other timers, a blank row, the keys, a blank row - so the whole thing is
-// redrawn in place and the wipe can take exactly the rows it wrote.
+// The block digits. Everything the display is made of is one region - the keys, a
+// blank row, the timer, a blank row, the other timers, a blank row - so the whole
+// thing is redrawn in place and the wipe can take exactly the rows it wrote.
 export function advancedOutput(): OutputProvider {
     const region = createRegion();
 
@@ -157,18 +158,24 @@ export function advancedOutput(): OutputProvider {
 }
 
 // The single line of text the app has always printed. It has no region to put
-// the keys under, so they go once above it and stay there until another provider
-// takes over the screen and reclaims the row.
+// the menu in, so the menu goes once above it and stays there until another
+// provider takes over the screen and reclaims the rows.
 export function standardOutput(): OutputProvider {
     const region = createRegion();
-    let printedKeysAbove = false;
+    let rowsPrintedAbove = 0;
 
-    function printKeysAbove() {
-        if (printedKeysAbove || !keysFitOnOneRow()) {
+    function printMenuAbove() {
+        if (rowsPrintedAbove > 0 || !keysFitOnOneRow()) {
             return;
         }
         console.log(renderHint());
-        printedKeysAbove = true;
+        rowsPrintedAbove = 1;
+        if (padsAroundLine()) {
+            // The same gap under the menu the block digits have, so the two
+            // displays are not two different rhythms.
+            console.log("");
+            rowsPrintedAbove = 2;
+        }
     }
 
     return {
@@ -176,14 +183,14 @@ export function standardOutput(): OutputProvider {
         // when nothing else will draw.
         canDraw: () => true,
         draw(current) {
-            // The wipe comes first, then the keys. The keys are a row the line
-            // does not own, so printing them before the wipe would leave the line
-            // a row lower than the row the next wipe is measured from, and the
-            // display would step down one row every time it changed.
+            // The wipe comes first, then the menu. The menu is rows the line does
+            // not own, so printing them before the wipe would leave the line a row
+            // lower than the row the next wipe is measured from, and the display
+            // would step down one row every time it changed.
             region.wipe();
-            printKeysAbove();
-            const line = renderPlainLine(current.milliseconds);
-            if (padsBelowLine()) {
+            printMenuAbove();
+            const line = renderPlainLine(current);
+            if (padsAroundLine()) {
                 // The line and the blank row under it are a region like the block
                 // digits are, so the blank row is cleared along with the line.
                 region.write([line, ""]);
@@ -192,12 +199,12 @@ export function standardOutput(): OutputProvider {
             region.writeLine(line);
         },
         clear() {
-            if (!printedKeysAbove) {
+            if (rowsPrintedAbove === 0) {
                 region.wipe();
                 return;
             }
-            region.clearIncludingRowAbove();
-            printedKeysAbove = false;
+            region.clearIncludingRowAbove(rowsPrintedAbove);
+            rowsPrintedAbove = 0;
         },
     };
 }

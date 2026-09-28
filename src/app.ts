@@ -4,6 +4,7 @@ import { advancedOutput, standardOutput } from "./output";
 import { millisecondsToClock } from "./timeUtils";
 import type { TimerSnapshot } from "./render";
 import { hasKnownSize } from "./terminal";
+import { DEFAULT_DISPLAY, readDisplay, writeDisplay } from "./settings";
 
 const RENDER_INTERVAL_MILLISECONDS = 50;
 const TITLE_INTERVAL_MILLISECONDS = 1000;
@@ -30,6 +31,11 @@ export function run() {
     const advanced = advancedOutput();
     const standard = standardOutput();
     let current = standard;
+    // The display the user last asked for, remembered from the last run. The
+    // default is the block digits whenever the terminal is big enough for them,
+    // which is what the app has always done on its own, so a first run and a run
+    // with an unreadable settings file behave the same.
+    let display = readDisplay() ?? DEFAULT_DISPLAY;
     let lastTitleUpdate = Number.NEGATIVE_INFINITY;
     let waitingForSizeSince: number | null = null;
 
@@ -72,13 +78,21 @@ export function run() {
         // can draw.
         updateWindowTitle(currentSnapshot.milliseconds, Date.now());
 
-        // The standard line fits anywhere, so the choice is which of the two can
-        // draw rather than whether one of them can. Handing over clears the rows
-        // the outgoing display owned, so the incoming one never draws on top of
-        // what is already there.
-        const wanted = advanced.canDraw(currentSnapshot, others.length)
-            ? advanced
-            : standard;
+        // Which display to use is a preference and a measurement, in that order.
+        // The preference says which one to try first, so the block digits stay
+        // the default and pressing d pins the plain line instead; the measurement
+        // still gets the last word, so a preference the terminal cannot honour
+        // falls back rather than drawing something it cannot draw. Handing over
+        // clears the rows the outgoing display owned, so the incoming one never
+        // draws on top of what is already there.
+        const order =
+            display === "advanced"
+                ? [advanced, standard]
+                : [standard, advanced];
+        const wanted =
+            order.find((provider) =>
+                provider.canDraw(currentSnapshot, others.length),
+            ) ?? standard;
         if (wanted !== current) {
             current.clear();
             current = wanted;
@@ -112,8 +126,18 @@ export function run() {
             timers.moveUp();
         } else if (key.name === "down") {
             timers.moveDown();
-        } else {
+        } else if (key.name === "space") {
             timers.toggleCurrentTimer();
+        } else if (key.name === "d") {
+            // Switch display and remember it. The choice is written straight away
+            // rather than on the way out, because esc ends the process and a
+            // choice made just before pressing it should not be the one that is
+            // lost.
+            display = display === "advanced" ? "standard" : "advanced";
+            writeDisplay(display);
         }
+        // Anything else is ignored. Treating every unbound key as a pause meant a
+        // key aimed at nothing silently stopped the timer, which is worse than
+        // doing nothing.
     });
 }
