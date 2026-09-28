@@ -27,6 +27,13 @@ function settingsFile() {
     return path.join(base, DIRECTORY, FILE);
 }
 
+// Is this one of the two displays, checked as a value rather than asserted as a
+// property: the key is read by name, but nothing here claims the name is right,
+// so a misspelling arrives as undefined and falls through to the default.
+function isDisplay(value: unknown): value is Display {
+    return value === "advanced" || value === "standard";
+}
+
 // The remembered display, or null when there is nothing remembered yet. Never
 // throws: a missing file is the normal case, and a file someone has edited by
 // hand, or a home directory that cannot be read, is not worth failing a
@@ -42,8 +49,8 @@ export function readDisplay(): Display | null {
     if (typeof saved !== "object" || saved === null) {
         return null;
     }
-    const display = (saved as { display?: unknown }).display;
-    return display === "advanced" || display === "standard" ? display : null;
+    const display = (saved as Record<string, unknown>).display;
+    return isDisplay(display) ? display : null;
 }
 
 // Remember the display, so it survives the next run. Also never throws, for the
