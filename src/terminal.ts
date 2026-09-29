@@ -13,11 +13,23 @@ export function hasDigitSupport() {
     );
 }
 
+// The size the terminal is reporting, as a pair, or null when it is not
+// reporting one it can be drawn against. @types/node types both as numbers, but
+// at runtime they are undefined when stdout is not a TTY, and a terminal that
+// answers with a zero has not really answered either, so both of those are an
+// unknown size here. Asking once and handing back the narrowed pair is what
+// stops a caller having to re-narrow the same two globals and getting it wrong.
+export function terminalSize(): { columns: number; rows: number } | null {
+    const { columns, rows } = process.stdout;
+    if (typeof columns !== "number" || typeof rows !== "number") {
+        return null;
+    }
+    if (columns <= 0 || rows <= 0) {
+        return null;
+    }
+    return { columns, rows };
+}
+
 export function hasKnownSize() {
-    return (
-        typeof process.stdout.columns === "number" &&
-        typeof process.stdout.rows === "number" &&
-        (process.stdout.columns as number) > 0 &&
-        (process.stdout.rows as number) > 0
-    );
+    return terminalSize() !== null;
 }

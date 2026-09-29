@@ -7,7 +7,7 @@ import {
     renderRegion,
     type TimerSnapshot,
 } from "./render";
-import { hasDigitSupport, hasKnownSize } from "./terminal";
+import { hasDigitSupport, terminalSize } from "./terminal";
 
 // One way of putting the timers on the screen. The app keeps one of these live,
 // hands it a snapshot every frame, and swaps it for another when the terminal
@@ -33,10 +33,14 @@ export type OutputProvider = {
 // terminal too narrow for the keys gets. An unknown width is left to print them:
 // there is nothing to measure against.
 function keysFitOnOneRow() {
-    return (
-        typeof process.stdout.columns !== "number" ||
-        (process.stdout.columns as number) >= hintWidth()
-    );
+    // The width on its own, not the size: a terminal with a width and no height
+    // is measured for the keys, and a width of zero is an answer that leaves no
+    // room for them rather than an unknown one.
+    const { columns } = process.stdout;
+    if (typeof columns !== "number") {
+        return true;
+    }
+    return columns >= hintWidth();
 }
 
 // Whether the plain line gets the blank rows above and below it that the block
@@ -130,22 +134,27 @@ function createRegion() {
         wipe,
         clear,
 
-        // The rows a display leaves above the region: printed once, at the top of
+        // The rows a display leaves above the region: written once, at the top of
         // the display, and then left where they are because a redraw cannot reach
         // them. How many there are is a question about the terminal as it is now,
         // so a resize can answer it differently - and when it does, the rows
-        // printed before are a different set of rows, so they have to be given
+        // written before are a different set of rows, so they have to be given
         // back before the new ones go out. Asking for the same number again is
         // what keeps the menu from being reprinted every frame, and comparing the
         // number rather than remembering whether the menu was printed is what
         // keeps the two from ever disagreeing about what is on the screen.
+        //
+        // Every row ends with a newline, exactly as the region rows do, so the
+        // menu and the region above which it sits are written and counted the
+        // same way. console.log would reach the same file descriptor, but not
+        // through the one path this file accounts for its rows on.
         printAbove(rows: string[]) {
             if (rows.length === rowsAbove) {
                 return;
             }
             clear();
             for (const row of rows) {
-                console.log(row);
+                process.stdout.write(`${row}\n`);
             }
             rowsAbove = rows.length;
         },
@@ -179,14 +188,18 @@ export function advancedOutput(): OutputProvider {
 
     return {
         canDraw(current, others) {
-            if (!hasDigitSupport() || !hasKnownSize()) {
+            if (!hasDigitSupport()) {
                 return false;
             }
-            const { columns, rows } = process.stdout;
+            // One reading of the size, so the gate below and the arithmetic that
+            // has to follow it cannot be answered by two different terminals.
+            const size = terminalSize();
+            if (size === null) {
+                return false;
+            }
             return (
-                (columns as number) >=
-                    digitsRequiredWidth(current.milliseconds) &&
-                (rows as number) >= digitsHeight(others) + 1
+                size.columns >= digitsRequiredWidth(current.milliseconds) &&
+                size.rows >= digitsHeight(others) + 1
             );
         },
         draw(current, others) {

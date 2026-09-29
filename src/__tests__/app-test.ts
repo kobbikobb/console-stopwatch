@@ -14,7 +14,6 @@ const STOPPED_COLOUR = 244;
 const coloured = (colour: number) => `${ESC}[38;5;${colour}m`;
 
 describe("app run", () => {
-    const consoleSpy = jest.spyOn(console, "log");
     const exitSpy = jest.spyOn(process, "exit").mockImplementation();
     const setRawMode = jest.fn();
     const clearLine = jest.fn();
@@ -268,11 +267,6 @@ describe("app run", () => {
             path.join(os.tmpdir(), "stopwatch-test-"),
         );
         process.env.XDG_CONFIG_HOME = settingsHome;
-        // The hint line goes out through console.log, so it has to reach the
-        // fake terminal too or the cursor model cannot see the row it takes.
-        consoleSpy.mockImplementation((...args: unknown[]) => {
-            process.stdout.write(`${args.map(String).join(" ")}\n`);
-        });
     });
 
     afterEach(() => {
@@ -284,7 +278,6 @@ describe("app run", () => {
             keypressListenersAtStart,
         );
         fs.rmSync(settingsHome, { recursive: true, force: true });
-        consoleSpy.mockReset();
         exitSpy.mockReset();
         setRawMode.mockReset();
         clearLine.mockReset();
@@ -437,15 +430,11 @@ describe("app run", () => {
         startRun();
         jest.advanceTimersByTime(50);
 
-        // What is on the screen and not only how often console.log was called: a
-        // hint that was printed and then wiped counts the same as one that is
+        // What is on the screen and not only how often something was written:
+        // a hint that was printed and then wiped counts the same as one that is
         // still there, and it is the second a person would notice.
         expect(terminal.screen[0]).toContain("r reset");
         expect(terminal.screen[1]).toContain("00:00.05");
-        expect(consoleSpy).toHaveBeenCalledTimes(1);
-        expect(consoleSpy).toHaveBeenCalledWith(
-            expect.stringContaining("r reset"),
-        );
     });
 
     it("should not reprint the hint above the plain line every frame", () => {
@@ -454,7 +443,6 @@ describe("app run", () => {
         startRun();
         jest.advanceTimersByTime(500);
 
-        expect(consoleSpy).toHaveBeenCalledTimes(1);
         // Ten frames later the keys are still the one row they were printed as,
         // rather than a row per frame pushed down the screen, with the line
         // still redrawn under them.
@@ -641,7 +629,7 @@ describe("app run", () => {
 
         it("should draw the menu at the top as part of the display", () => {
             withDigitSupport(120, 40);
-            fakeTerminal();
+            const terminal = fakeTerminal();
             startRun();
             jest.advanceTimersByTime(50);
 
@@ -654,7 +642,15 @@ describe("app run", () => {
             const rows = lastWrite.split("\n").filter((row) => row.length > 0);
             expect(rows[0]).toContain("esc quit");
             expect(rows[rows.length - 1]).toContain("█");
-            expect(consoleSpy).not.toHaveBeenCalled();
+            // The row the menu is on is the row the region starts on, which is
+            // what "part of the display" comes to: a menu printed above the
+            // region would leave the region starting two rows lower, and the
+            // screen would look the same either way, so this is the part that
+            // says where the row was written from.
+            expect(terminal.screen[0]).toContain("esc quit");
+            expect(
+                terminal.writeStarts[terminal.writeStarts.length - 1],
+            ).toEqual({ row: 0, column: 0 });
         });
 
         it("should name the key that switches display in the menu", () => {
@@ -991,7 +987,11 @@ describe("app run", () => {
             // The hint is wider than the terminal, so it would take a second
             // row the plain line knows nothing about. The line still gets the
             // blank row under it, on row one, so the cursor parks on row two.
-            expect(consoleSpy).not.toHaveBeenCalled();
+            // The keys are looked for on the screen, where a hint that was
+            // printed anyway would have taken the rows above the line.
+            expect(terminal.screen.some((row) => row.includes("r reset"))).toBe(
+                false,
+            );
             expect(terminal.row).toBe(2);
             expect(
                 terminal.screen.filter((row) => row.trim().length > 0),
@@ -1075,9 +1075,14 @@ describe("app run", () => {
             jest.advanceTimersByTime(100);
 
             // Nothing at all, not even the hint: there is no way to know whether
-            // the terminal is tall enough for the display to put it under.
+            // the terminal is tall enough for the display to put it under. The
+            // rows are checked and not only the cursor, so a hint that had been
+            // drawn and then wiped again cannot pass for a display that never
+            // drew at all.
             expect(terminal.row).toBe(0);
-            expect(consoleSpy).not.toHaveBeenCalled();
+            expect(
+                terminal.screen.filter((row) => row.trim().length > 0),
+            ).toHaveLength(0);
         });
 
         it("should give up waiting and write the plain line", () => {
@@ -1107,15 +1112,27 @@ describe("app run", () => {
             startRun();
             jest.advanceTimersByTime(100);
 
+            // A width of zero is a width, so the wait below is for a size it can
+            // never have. Nothing is drawn while it is on, and the rows are
+            // checked as well as the cursor so a frame that was drawn and then
+            // wiped cannot pass for one that never was.
             expect(terminal.row).toBe(0);
-            expect(consoleSpy).not.toHaveBeenCalled();
+            expect(
+                terminal.screen.filter((row) => row.trim().length > 0),
+            ).toHaveLength(0);
 
             jest.advanceTimersByTime(1500);
 
             // The line is drawn rather than the digits, and with no keys above
             // it: there is no width to tell whether they fit on one row, and a
             // key that wrapped would take a row the line knows nothing about.
-            expect(consoleSpy).not.toHaveBeenCalled();
+            // A width of zero has to be read as no room for the keys rather than
+            // as no width to measure them against, or the menu is printed and
+            // the line is drawn below it. Where the line starts is checked
+            // rather than whether the keys are on the screen, because a terminal
+            // reporting a width of zero puts one character to a row, so a menu
+            // printed here would not be a row of text to look for.
+            expect(terminal.screen[0]).toBe("0");
             expect(terminal.screen.some((row) => row.includes("█"))).toBe(
                 false,
             );

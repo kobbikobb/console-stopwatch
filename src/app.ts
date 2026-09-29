@@ -1,4 +1,5 @@
 import readline, { type Key } from "readline";
+import type { Timer } from "./Timer";
 import { Timers } from "./Timers";
 import { advancedOutput, standardOutput } from "./output";
 import { millisecondsToClock } from "./timeUtils";
@@ -46,10 +47,7 @@ export function run(): RunHandle {
     let lastTitleUpdate = Number.NEGATIVE_INFINITY;
     let waitingForSizeSince: number | null = null;
 
-    const snapshot = (timer: {
-        getMilliseconds: () => number;
-        isRunning: () => boolean;
-    }): TimerSnapshot => ({
+    const snapshot = (timer: Timer): TimerSnapshot => ({
         milliseconds: timer.getMilliseconds(),
         isRunning: timer.isRunning(),
     });
@@ -80,9 +78,10 @@ export function run(): RunHandle {
         const others = timers.getOtherTimers();
         const currentSnapshot = snapshot(timer);
 
-        // The title is the app's, not a display's: it is mirrored whichever way
-        // the timers are being shown, so it does not wait for a provider that
-        // can draw.
+        // The title is the app's, not a display's, so it is written the same way
+        // whichever provider is drawing - it is a title, not a frame, and it
+        // belongs to neither display. Whether this frame gets that far is the
+        // size gate's decision above, not the title's own.
         updateWindowTitle(currentSnapshot.milliseconds, Date.now());
 
         // Which display to use is a preference and a measurement, in that order.
