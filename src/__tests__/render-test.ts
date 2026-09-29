@@ -1,4 +1,4 @@
-import { digitsWidth, GLYPH_HEIGHT } from "../blockDigits";
+import { buildDigitRows, digitsWidth, GLYPH_HEIGHT } from "../blockDigits";
 import {
     digitsHeight,
     digitsRequiredWidth,
@@ -168,19 +168,33 @@ describe("render", () => {
 
     describe("digitsRequiredWidth", () => {
         it("should cover the width the digits draw at zero", () => {
-            const required = digitsRequiredWidth(0);
-            const drawn = renderDigits({ milliseconds: 0, isRunning: true });
+            // The gate is a max over the widths of the rows the display draws,
+            // so comparing it to a drawn row proves nothing: the row it is
+            // compared to is one of the things the max is made of. What is worth
+            // pinning here is the drawn width itself, which the gate is not built
+            // out of.
+            //
+            // Eight characters of mm:ss.cc, five glyphs of three columns and two
+            // of one, with a column between each pair, then the padding.
+            const drawn = stripAnsi(
+                renderDigits({ milliseconds: 0, isRunning: true })[0],
+            );
 
-            expect(required).toBeGreaterThanOrEqual(stripAnsi(drawn[0]).length);
+            expect(drawn).toBe(
+                " ".repeat(PADDING) + buildDigitRows("00:00.00")[0],
+            );
+            expect(drawn).toHaveLength(PADDING + 27);
         });
 
         it("should cover the hours appearing an hour in", () => {
             const under = digitsRequiredWidth(59 * 60 * 1000);
             const over = digitsRequiredWidth(60 * 60 * 1000);
 
-            // The digits grow by four columns when the first hour appears, and
-            // the gate has to already allow for it or the display would drop to
-            // the plain line at that point.
+            // The digits grow by six columns when the first hour appears (a three
+            // wide digit, a separator, and the two gaps either side), and the gate
+            // has to already allow for it or the display would drop to the plain
+            // line at that point. Both sides are the same gate call, so this fails
+            // if the gate starts growing with the hours.
             expect(over).toBe(under);
         });
 
@@ -198,16 +212,17 @@ describe("render", () => {
         });
 
         it("should still cover three digit hours", () => {
-            // Growing the gate at 99 hours was how the hours were stopped from
-            // wrapping. The menu is wider than three digit hours now, so the gate
-            // does not have to grow for it, but the digits still have to fit
-            // inside what it does allow.
+            // The menu is wider than three digit hours, so the gate does not grow
+            // for them. Pinned as an explicit figure: the gate is 50 columns, and
+            // 100 hours of digits draw 43, so there is real headroom rather than
+            // a comparison that would hold whatever the two numbers were.
             const milliseconds = 100 * 60 * 60 * 1000;
-            const drawn = renderDigits({ milliseconds, isRunning: true });
-
-            expect(digitsRequiredWidth(milliseconds)).toBeGreaterThanOrEqual(
-                stripAnsi(drawn[0]).length,
+            const drawn = stripAnsi(
+                renderDigits({ milliseconds, isRunning: true })[0],
             );
+
+            expect(drawn).toHaveLength(43);
+            expect(digitsRequiredWidth(milliseconds)).toBe(50);
         });
     });
 

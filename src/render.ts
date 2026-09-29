@@ -16,7 +16,7 @@ const INDENT = " ".repeat(PADDING);
 
 // Printed once, at the top of the display, as the first row of the region. It is
 // now the widest thing in the display, so it is what the width gate is set by.
-export const HINT_TEXT =
+const HINT_TEXT =
     "r reset \u00b7 n new \u00b7 d display \u00b7 \u2423 pause \u00b7 esc quit";
 
 // The colour the original single line used, so a running stopwatch looks the
@@ -81,21 +81,16 @@ export function renderRegion(current: TimerSnapshot, others: TimerSnapshot[]) {
     ];
 }
 
-// The widest the display gets before the hours run to three digits. A row that
-// wraps takes a second line the cursor arithmetic does not know about, so the
-// gate has to cover it: the digits grow by four columns when the first hour
-// appears, and a stopwatch that dropped to the plain line at that point would
-// look broken. One column of headroom is cheaper than that.
-const WIDTH_WITH_HOURS = digitsWidth("00:00:00.00") + PADDING;
-
-// The width the display needs at this elapsed time. Past 99 hours the hours
-// themselves grow a column, so this cannot be a constant. The keys are in the
-// gate as well as the digits: a menu that wraps takes a second row the height
-// arithmetic does not know about, and the menu now names the key that switches
-// display, which makes it wider than the timer ever gets.
+// The width the display needs at this elapsed time. A row that wraps takes a
+// second line the cursor arithmetic does not know about, so the gate has to
+// cover every row the display draws: the digits, which grow a column per extra
+// hour digit, and the menu, which is wider than the timer ever gets now that it
+// names the key that switches display. The menu wins today at every elapsed
+// time, but the digits stay in the max so a shorter menu cannot quietly let them
+// wrap, which is what the gate is for.
 export function digitsRequiredWidth(milliseconds: number) {
     const time = millisecondsToPrettyDuration(milliseconds);
-    return Math.max(digitsWidth(time) + PADDING, WIDTH_WITH_HOURS, hintWidth());
+    return Math.max(digitsWidth(time) + PADDING, hintWidth());
 }
 
 export function hintWidth() {
