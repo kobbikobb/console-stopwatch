@@ -6,12 +6,12 @@ import path from "path";
 // digits when the terminal is big enough for them, or the single line. The
 // choice is the same either way, so it is one small value rather than a
 // settings file full of things.
-export type Display = "advanced" | "standard";
+export type Display = "digits" | "line";
 
 // The display to use when nothing has been chosen yet, which is also what an
 // unreadable or unrecognised file falls back to. This is the display the app has
 // always picked for itself, so a first run looks like the last one.
-export const DEFAULT_DISPLAY: Display = "advanced";
+export const DEFAULT_DISPLAY: Display = "digits";
 
 const DIRECTORY = "console-stopwatch";
 const FILE = "settings.json";
@@ -31,7 +31,7 @@ function settingsFile() {
 // property: the key is read by name, but nothing here claims the name is right,
 // so a misspelling arrives as undefined and falls through to the default.
 function isDisplay(value: unknown): value is Display {
-    return value === "advanced" || value === "standard";
+    return value === "digits" || value === "line";
 }
 
 // The remembered display, or null when there is nothing remembered yet. Never

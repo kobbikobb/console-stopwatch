@@ -2,7 +2,7 @@ import readline, { type Key } from "readline";
 import type { Timer } from "./Timer";
 import { Timers } from "./Timers";
 import { findBinding, type KeyAction } from "./keys";
-import { advancedOutput, standardOutput } from "./output";
+import { digitsOutput, lineOutput } from "./output";
 import { millisecondsToClock } from "./timeUtils";
 import type { TimerSnapshot } from "./render";
 import { hasKnownSize } from "./terminal";
@@ -37,9 +37,9 @@ export function run(): RunHandle {
     // remembers the rows it owns. Which one is live is a question about the
     // terminal, so it is asked again every frame and can change when the
     // terminal is resized.
-    const advanced = advancedOutput();
-    const standard = standardOutput();
-    let current = standard;
+    const digits = digitsOutput();
+    const line = lineOutput();
+    let current = line;
     // The display the user last asked for, remembered from the last run. The
     // default is the block digits whenever the terminal is big enough for them,
     // which is what the app has always done on its own, so a first run and a run
@@ -92,14 +92,11 @@ export function run(): RunHandle {
         // falls back rather than drawing something it cannot draw. Handing over
         // clears the rows the outgoing display owned, so the incoming one never
         // draws on top of what is already there.
-        const order =
-            display === "advanced"
-                ? [advanced, standard]
-                : [standard, advanced];
+        const order = display === "digits" ? [digits, line] : [line, digits];
         const wanted =
             order.find((provider) =>
                 provider.canDraw(currentSnapshot, others.length),
-            ) ?? standard;
+            ) ?? line;
         if (wanted !== current) {
             current.clear();
             current = wanted;
@@ -162,7 +159,7 @@ export function run(): RunHandle {
             // rather than on the way out, because esc ends the process and a
             // choice made just before pressing it should not be the one that is
             // lost.
-            display = display === "advanced" ? "standard" : "advanced";
+            display = display === "digits" ? "line" : "digits";
             writeDisplay(display);
         },
     };

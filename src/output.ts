@@ -183,7 +183,7 @@ function createRegion() {
 // The block digits. Everything the display is made of is one region - the keys, a
 // blank row, the timer, a blank row, the other timers, a blank row - so the whole
 // thing is redrawn in place and the wipe can take exactly the rows it wrote.
-export function advancedOutput(): OutputProvider {
+export function digitsOutput(): OutputProvider {
     const region = createRegion();
 
     return {
@@ -216,7 +216,7 @@ export function advancedOutput(): OutputProvider {
 // The single line of text the app has always printed. It has no region to put
 // the menu in, so the menu goes once above it and stays there until another
 // provider takes over the screen and reclaims the rows.
-export function standardOutput(): OutputProvider {
+export function lineOutput(): OutputProvider {
     const region = createRegion();
 
     // The rows the line leaves above itself. Nothing when the menu would wrap,

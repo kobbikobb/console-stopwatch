@@ -69,15 +69,15 @@ describe("settings", () => {
         });
 
         it("should return what was written", () => {
-            writeDisplay("standard");
+            writeDisplay("line");
 
-            expect(readDisplay()).toBe("standard");
+            expect(readDisplay()).toBe("line");
         });
 
         it("should return what was written the other way round", () => {
-            writeDisplay("advanced");
+            writeDisplay("digits");
 
-            expect(readDisplay()).toBe("advanced");
+            expect(readDisplay()).toBe("digits");
         });
 
         it("should return nothing for a file that is not json", () => {
@@ -97,9 +97,34 @@ describe("settings", () => {
             expect(readDisplay()).toBeNull();
         });
 
+        it("should return nothing for the display names it was renamed from", () => {
+            // The two values used to be called "advanced" and "standard", which
+            // said nothing about what the user sees. They are not a display
+            // name this build knows, so a file holding either of them reads as
+            // nothing remembered rather than as a preference, and the app's
+            // default applies. There is deliberately no shim that maps them
+            // across: nothing has shipped with the old names, so the only files
+            // that can hold them were written by a build nobody else has, and
+            // renaming again later would then have to carry the old names
+            // forever. The cost of getting it wrong now is one build's own
+            // leftovers; the cost of keeping them is an on-disk format with two
+            // names for one thing.
+            for (const renamed of ["advanced", "standard"]) {
+                fs.mkdirSync(path.dirname(settingsFile(home)), {
+                    recursive: true,
+                });
+                fs.writeFileSync(
+                    settingsFile(home),
+                    JSON.stringify({ display: renamed }),
+                );
+
+                expect(readDisplay()).toBeNull();
+            }
+        });
+
         it("should return nothing for json that is not an object", () => {
             fs.mkdirSync(path.dirname(settingsFile(home)), { recursive: true });
-            fs.writeFileSync(settingsFile(home), JSON.stringify("standard"));
+            fs.writeFileSync(settingsFile(home), JSON.stringify("line"));
 
             expect(readDisplay()).toBeNull();
         });
@@ -126,24 +151,24 @@ describe("settings", () => {
                 false,
             );
 
-            writeDisplay("standard");
+            writeDisplay("line");
 
             expect(fs.existsSync(settingsFile(home, false))).toBe(true);
         });
 
         it("should write only the display", () => {
-            writeDisplay("standard");
+            writeDisplay("line");
 
             expect(
                 JSON.parse(fs.readFileSync(settingsFile(home, false), "utf8")),
-            ).toEqual({ display: "standard" });
+            ).toEqual({ display: "line" });
         });
 
         it("should replace a file that was already there", () => {
-            writeDisplay("standard");
-            writeDisplay("advanced");
+            writeDisplay("line");
+            writeDisplay("digits");
 
-            expect(readDisplay()).toBe("advanced");
+            expect(readDisplay()).toBe("digits");
         });
 
         it("should not throw when it cannot write", () => {
@@ -154,7 +179,7 @@ describe("settings", () => {
             fs.writeFileSync(directory, "");
             const mkdirSpy = jest.spyOn(fs, "mkdirSync");
 
-            expect(() => writeDisplay("standard")).not.toThrow();
+            expect(() => writeDisplay("line")).not.toThrow();
             // The call that fails was actually made, so it is the catch that kept
             // the app up and not a setup that quietly succeeded.
             expect(mkdirSpy).toHaveBeenCalledWith(directory, {
@@ -175,7 +200,7 @@ describe("settings", () => {
             );
             process.env.XDG_CONFIG_HOME = xdg;
 
-            writeDisplay("standard");
+            writeDisplay("line");
 
             expect(fs.existsSync(settingsFile(xdg, false))).toBe(true);
             expect(pathsWritten().every((p) => p.startsWith(xdg))).toBe(true);
@@ -192,7 +217,7 @@ describe("settings", () => {
             // stubbed instead.
             const homedir = jest.spyOn(os, "homedir").mockReturnValue(fallback);
 
-            writeDisplay("standard");
+            writeDisplay("line");
 
             // The home directory case has a .config in the path, which the XDG
             // one does not.
@@ -208,7 +233,7 @@ describe("settings", () => {
             // npm owns the directory the module is installed in, prunes it on
             // upgrade, and on a system wide install it belongs to root, so a
             // choice kept there would not survive for most people.
-            writeDisplay("standard");
+            writeDisplay("line");
 
             expect(fs.existsSync(settingsFile(home, false))).toBe(true);
             expect(pathsWritten()).toEqual([settingsFile(home, false)]);

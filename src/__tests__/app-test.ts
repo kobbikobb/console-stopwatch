@@ -1417,7 +1417,7 @@ describe("app run", () => {
             // Written when the key is pressed rather than on the way out, because
             // esc ends the process and a choice made just before pressing it
             // should not be the one that is lost.
-            expect(JSON.parse(readSettings())).toEqual({ display: "standard" });
+            expect(JSON.parse(readSettings())).toEqual({ display: "line" });
             // And written by this run and nothing else. The file is one the
             // whole process shares, so a handler left over from an earlier run
             // would write the same value again and this would pass either way.
@@ -1457,12 +1457,12 @@ describe("app run", () => {
             process.stdin.emit("data", Buffer.from("d"));
 
             expect(writeFile).toHaveBeenCalledTimes(1);
-            expect(JSON.parse(readSettings())).toEqual({ display: "advanced" });
+            expect(JSON.parse(readSettings())).toEqual({ display: "digits" });
             writeFile.mockRestore();
         });
 
         it("should start on the plain line when that is what it was left on", () => {
-            writeSettings(JSON.stringify({ display: "standard" }));
+            writeSettings(JSON.stringify({ display: "line" }));
             withDigitSupport(ROOMY.columns, ROOMY.rows);
             fakeTerminal();
             startRun();
@@ -1474,7 +1474,7 @@ describe("app run", () => {
         });
 
         it("should stay on the plain line when the terminal grows", () => {
-            writeSettings(JSON.stringify({ display: "standard" }));
+            writeSettings(JSON.stringify({ display: "line" }));
             withDigitSupport(51, 10);
             const terminal = fakeTerminal();
             startRun();
@@ -1491,7 +1491,7 @@ describe("app run", () => {
         });
 
         it("should start on the block digits when that is what it was left on", () => {
-            writeSettings(JSON.stringify({ display: "advanced" }));
+            writeSettings(JSON.stringify({ display: "digits" }));
             withDigitSupport(ROOMY.columns, ROOMY.rows);
             fakeTerminal();
             startRun();
@@ -1546,7 +1546,7 @@ describe("app run", () => {
         });
 
         it("should fall back to the plain line when the terminal is too small", () => {
-            writeSettings(JSON.stringify({ display: "advanced" }));
+            writeSettings(JSON.stringify({ display: "digits" }));
             withDigitSupport(120, 5);
             fakeTerminal();
             startRun();
