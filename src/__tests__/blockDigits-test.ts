@@ -40,6 +40,27 @@ describe("blockDigits", () => {
         }
     });
 
+    // Every glyph this module can draw, each one alone: the ten digits, the two
+    // separators, and whatever the fallback hands back for a character with no
+    // glyph. The glyph table is module-private, so a ragged glyph cannot be
+    // built here without changing the production digits. What can be pinned is
+    // the invariant the width gate leans on — every row of a glyph is the same
+    // width, so the width reported is the width drawn, and digitsWidth can read
+    // the widest row instead of row 0. The exact-row fixtures above only fail
+    // on a ragged glyph if nobody updates them alongside it; this fails either
+    // way.
+    it.each([...DIGITS.map(([digit]) => digit), ":", ".", "x"])(
+        "should draw %s in rows of a single width",
+        (character) => {
+            const drawn = buildDigitRows(character);
+
+            expect(new Set(drawn.map((row) => row.length)).size).toBe(1);
+            expect(digitsWidth(character)).toBe(
+                Math.max(...drawn.map((row) => row.length)),
+            );
+        },
+    );
+
     it("should be narrow enough for a split pane", () => {
         // 8 digits at 3 columns, 2 colons and a dot at 1, and a blank column
         // between each of the eleven glyphs.

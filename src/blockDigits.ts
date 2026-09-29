@@ -21,11 +21,14 @@ const DOT: string[] = [" ", " ", " ", " ", "█"];
 
 const BLANK: string[] = [" ", " ", " ", " ", " "];
 
-const GLYPHS: Record<string, string[]> = {
+// The value type says a lookup can miss, because a lookup can: anything that is
+// not a digit, a colon or a dot has no glyph. Typed as a total Record the miss
+// case is invisible to the compiler and the BLANK fallback below would read as
+// dead code when it is the path every unknown character actually takes.
+const GLYPHS: Record<string, string[] | undefined> = {
     ...DIGITS,
     ":": COLON,
     ".": DOT,
-    " ": BLANK,
 };
 
 function glyphFor(character: string) {
@@ -53,10 +56,18 @@ export function buildDigitRows(text: string) {
     return rows.map((row) => row.join(""));
 }
 
+// buildDigitRows emits every row of a glyph, so the width it draws is the
+// widest row. Row 0 only happens to be that row while every glyph in the table
+// is uniform; a glyph with one short row would then be reported a column too
+// narrow, and the digits would wrap mid-run.
+function glyphWidth(glyph: string[]) {
+    return Math.max(...glyph.map((row) => row.length));
+}
+
 export function digitsWidth(text: string) {
     return [...text].reduce(
         (width, character, index) =>
-            width + glyphFor(character)[0].length + (index > 0 ? 1 : 0),
+            width + glyphWidth(glyphFor(character)) + (index > 0 ? 1 : 0),
         0,
     );
 }
