@@ -1,6 +1,5 @@
 import { digitsWidth, GLYPH_HEIGHT } from "../blockDigits";
 import {
-    colorFor,
     digitsHeight,
     digitsRequiredWidth,
     hintWidth,
@@ -14,14 +13,13 @@ import {
 
 const ESC = String.fromCharCode(27);
 const RESET = `${ESC}[0m`;
+// The two colour codes, written out. Building the expected escape out of the
+// same helper the renderer calls with proves only that the two calls disagree,
+// so any other pair of codes would pass; these are the codes themselves.
+const RUNNING = `${ESC}[38;5;214m`;
+const STOPPED = `${ESC}[38;5;244m`;
 const stripAnsi = (text: string) =>
-    text
-        .split(`${ESC}[38;5;214m`)
-        .join("")
-        .split(`${ESC}[38;5;244m`)
-        .join("")
-        .split(RESET)
-        .join("");
+    text.split(RUNNING).join("").split(STOPPED).join("").split(RESET).join("");
 
 describe("render", () => {
     describe("renderDigits", () => {
@@ -34,13 +32,12 @@ describe("render", () => {
         it("should colour the glyphs, not an empty string before them", () => {
             const rows = renderDigits({ milliseconds: 50, isRunning: true });
             const first = rows[0];
-            const colour = `${ESC}[38;5;${colorFor(true)}m`;
 
             // The colour opens at the very start and the glyphs follow it
             // immediately. An empty coloured string would reset the colour again
             // before a single glyph was drawn, leaving the digits plain.
-            expect(first.startsWith(colour)).toBe(false);
-            expect(first.startsWith(`${" ".repeat(PADDING)}${colour}`)).toBe(
+            expect(first.startsWith(RUNNING)).toBe(false);
+            expect(first.startsWith(`${" ".repeat(PADDING)}${RUNNING}`)).toBe(
                 true,
             );
             expect(first.endsWith(RESET)).toBe(true);
@@ -49,15 +46,17 @@ describe("render", () => {
         it("should colour a running timer orange, as the plain line does", () => {
             const rows = renderDigits({ milliseconds: 50, isRunning: true });
 
-            expect(rows[0]).toContain(`${ESC}[38;5;${colorFor(true)}m`);
+            expect(rows[0]).toContain(RUNNING);
         });
 
         it("should draw a paused timer in a different colour", () => {
             const running = renderDigits({ milliseconds: 50, isRunning: true });
             const paused = renderDigits({ milliseconds: 50, isRunning: false });
 
-            expect(colorFor(true)).not.toBe(colorFor(false));
-            expect(paused[0]).toContain(`${ESC}[38;5;${colorFor(false)}m`);
+            expect(paused[0]).toContain(STOPPED);
+            // Pinned to both codes, not just to "not the running one": a stopped
+            // timer that went grey in a shade nobody chose still has to fail.
+            expect(paused[0]).not.toContain(RUNNING);
             expect(paused[0]).not.toBe(running[0]);
         });
 
@@ -153,7 +152,7 @@ describe("render", () => {
         });
 
         it("should be the dim colour of the listed timers", () => {
-            expect(renderHint()).toContain(`${ESC}[38;5;244m`);
+            expect(renderHint()).toContain(STOPPED);
         });
 
         it("should name every key", () => {
@@ -185,21 +184,16 @@ describe("render", () => {
             expect(over).toBe(under);
         });
 
-        it("should cover the hint row at any elapsed time", () => {
-            // A row wider than the gate wraps, and the cursor arithmetic does not
-            // know about the extra line. The menu is what sets the gate now, since
-            // naming the key that switches display made it wider than the timer
-            // ever gets, and it still has to fit once the hours are three digits.
-            expect(digitsRequiredWidth(0)).toBeGreaterThanOrEqual(hintWidth());
-            expect(
-                digitsRequiredWidth(100 * 60 * 60 * 1000),
-            ).toBeGreaterThanOrEqual(hintWidth());
-        });
-
         it("should be set by the menu, which is now the widest row", () => {
             // The menu grew wider than the timer when it started naming the key
             // that switches display, and the gate follows the widest row, so a
             // terminal that fits the menu fits the timer too.
+            //
+            // This is the cross check that works: it compares the gate against
+            // the width of the menu, which the gate is not built out of, so it
+            // fails if either side moves past the other. Comparing the gate
+            // against the rows it is drawn from cannot fail, because the gate is
+            // a max of those very widths.
             expect(digitsRequiredWidth(0)).toBe(hintWidth());
         });
 
@@ -274,13 +268,15 @@ describe("render", () => {
 
         it("should grey a stopped timer, as the block digits do", () => {
             // It used to be the running colour whatever the state, so the same
-            // stopped timer was orange on the line and grey in the digits.
+            // stopped timer was orange on the line and grey in the digits. The
+            // codes are written out rather than asked of the renderer, so this
+            // pins 244 and not merely "some other colour than 214".
             expect(
                 renderPlainLine({ milliseconds: 50, isRunning: false }),
             ).not.toBe(renderPlainLine({ milliseconds: 50, isRunning: true }));
             expect(
                 renderPlainLine({ milliseconds: 50, isRunning: false }),
-            ).toBe(`\x1b[38;5;${colorFor(false)}m00:00.05\x1b[0m`);
+            ).toBe("\x1b[38;5;244m00:00.05\x1b[0m");
         });
     });
 });

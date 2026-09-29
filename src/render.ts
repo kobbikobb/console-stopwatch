@@ -32,7 +32,7 @@ function foreground(color: number, text: string) {
     return `\x1b[38;5;${color}m${text}${RESET}`;
 }
 
-export function colorFor(isRunning: boolean) {
+function colorFor(isRunning: boolean) {
     return isRunning ? RUNNING_COLOR : PAUSED_COLOR;
 }
 

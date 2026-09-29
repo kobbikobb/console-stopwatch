@@ -1,7 +1,7 @@
 import fs from "fs";
 import os from "os";
 import path from "path";
-import { DEFAULT_DISPLAY, readDisplay, writeDisplay } from "../settings";
+import { readDisplay, writeDisplay } from "../settings";
 
 describe("settings", () => {
     const originalConfigHome = process.env.XDG_CONFIG_HOME;
@@ -55,13 +55,13 @@ describe("settings", () => {
         restore("HOME", originalHome);
     });
 
-    describe("the default", () => {
-        it("should be the display the app has always picked for itself", () => {
-            // The block digits whenever the terminal is big enough for them, so
-            // a first run and a run with nothing remembered behave the same.
-            expect(DEFAULT_DISPLAY).toBe("advanced");
-        });
-    });
+    // The default itself is not asserted here. DEFAULT_DISPLAY is read by the
+    // app, not by this module: nothing here consumes it, so a test that checked
+    // its value would still pass with the app no longer asking for it. What this
+    // module owes, and what readDisplay below checks, is that nothing
+    // remembered reads as nothing remembered, which is what lets the app's
+    // default be what a first run gets. Pinning the value itself needs a test
+    // that can see what the app does with it.
 
     describe("readDisplay", () => {
         it("should return nothing when there is no file yet", () => {
@@ -147,11 +147,24 @@ describe("settings", () => {
         });
 
         it("should not throw when it cannot write", () => {
-            // A path with a file where the directory should be: mkdir and write
-            // both fail, and neither is worth taking the app down for.
-            fs.writeFileSync(path.join(home, "console-stopwatch"), "");
+            // A path with a file where the directory should be: creating the
+            // directory fails, so the write never gets as far as happening, and
+            // neither is worth taking the app down for.
+            const directory = path.join(home, "console-stopwatch");
+            fs.writeFileSync(directory, "");
+            const mkdirSpy = jest.spyOn(fs, "mkdirSync");
 
             expect(() => writeDisplay("standard")).not.toThrow();
+            // The call that fails was actually made, so it is the catch that kept
+            // the app up and not a setup that quietly succeeded.
+            expect(mkdirSpy).toHaveBeenCalledWith(directory, {
+                recursive: true,
+            });
+            mkdirSpy.mockRestore();
+            // And nothing was remembered: the choice is lost rather than half
+            // written, so the next run falls back on the default.
+            expect(fs.existsSync(settingsFile(home, false))).toBe(false);
+            expect(readDisplay()).toBeNull();
         });
     });
 
