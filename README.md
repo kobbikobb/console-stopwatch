@@ -25,7 +25,7 @@ keys you can press are listed at the top, with the timer a blank row below
 them. At 00:00.05, with one timer running and no others:
 
 ```
-  r reset · n new · d display · ␣ pause · esc quit
+  r reset · n new · d display · ␣ toggle · esc quit
 
    █   █     █   █     █  ███
   █ █ █ █ █ █ █ █ █   █ █ █

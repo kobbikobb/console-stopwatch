@@ -3,6 +3,7 @@ import os from "os";
 import path from "path";
 import { run, type RunHandle } from "../app";
 import { GLYPH_HEIGHT } from "../blockDigits";
+import { BINDINGS, type KeyAction } from "../keys";
 
 const ESC = String.fromCharCode(27);
 
@@ -614,6 +615,183 @@ describe("app run", () => {
         expectWriteToContainLastTime("00:00.10");
     });
 
+    describe("the key table", () => {
+        // What each action in the table has to do when its key is pressed. It is
+        // written out here rather than read back out of the table, because the
+        // claim being made is that a key does this and not that the table says
+        // it does. The type is the same set of actions the table names, so an
+        // action added there is an action this file does not compile without: a
+        // key cannot be wired up until somebody has said what it does.
+        const expectAction: Record<KeyAction, (press: () => void) => void> = {
+            reset(press) {
+                startRun();
+                jest.advanceTimersByTime(100);
+
+                press();
+
+                jest.advanceTimersByTime(50);
+                expectWriteToContainLastTime("00:00.05");
+            },
+            newTimer(press) {
+                startRun();
+                jest.advanceTimersByTime(100);
+
+                press();
+
+                // The new timer starts from zero, so the time the old one had
+                // reached is gone from the line and this is what is on it now.
+                jest.advanceTimersByTime(50);
+                expectWriteToContainLastTime("00:00.05");
+                expect(write).not.toHaveBeenLastCalledWith(
+                    expect.stringContaining("00:00.15"),
+                );
+            },
+            toggleDisplay(press) {
+                // The one action with no effect on the plain line, so this is the
+                // only one that needs a terminal the digits fit in.
+                withDigitSupport(120, 40);
+                fakeTerminal();
+                startRun();
+                jest.advanceTimersByTime(50);
+                expectDigits();
+
+                press();
+
+                jest.advanceTimersByTime(50);
+                expectPlainLine(true);
+            },
+            toggle(press) {
+                startRun();
+
+                press();
+
+                // Paused, so the time stands still.
+                jest.advanceTimersByTime(100);
+                expectWriteToContainLastTime("00:00.00");
+
+                // And the same key again starts it, which is the half of what the
+                // key does that a menu saying "pause" left out.
+                press();
+                jest.advanceTimersByTime(100);
+                expectWriteToContainLastTime("00:00.10");
+            },
+            quit(press) {
+                startRun();
+
+                press();
+
+                expect(exitSpy).toHaveBeenCalledWith(0);
+                // Taken down on the way out rather than left behind: a run still
+                // listening and still holding its redraw timer in a process on
+                // its way to being gone is a run that goes on answering keys.
+                expect(process.stdin.listenerCount("keypress")).toBe(
+                    keypressListenersAtStart,
+                );
+                expect(jest.getTimerCount()).toBe(0);
+            },
+            moveUp(press) {
+                startRun();
+                jest.advanceTimersByTime(100);
+                // The first timer stops at a tenth of a second and the second
+                // starts from zero, so the two show different times and moving
+                // between them is visible on the line.
+                process.stdin.emit("data", Buffer.from("n"));
+                jest.advanceTimersByTime(300);
+                expectWriteToContainLastTime("00:00.30");
+
+                press();
+
+                jest.advanceTimersByTime(50);
+                expectWriteToContainLastTime("00:00.10");
+            },
+            moveDown(press) {
+                startRun();
+                jest.advanceTimersByTime(100);
+                // Two timers, and back up to the first, so that down has
+                // somewhere to go: the key is a no-op on the last one.
+                process.stdin.emit("data", Buffer.from("n"));
+                process.stdin.emit("keypress", "", { name: "up" });
+                jest.advanceTimersByTime(300);
+                expectWriteToContainLastTime("00:00.10");
+
+                press();
+
+                jest.advanceTimersByTime(50);
+                expectWriteToContainLastTime("00:00.35");
+            },
+        };
+
+        // One live run at a time, on the plain line. A second run would answer
+        // the same keypress and write into the same mock, and which of the two
+        // writes came last would be up to the order their redraw timers fired in
+        // rather than to anything the test meant.
+        const freshRun = () => {
+            stopEveryRun();
+            write.mockClear();
+            withoutDigitSupport();
+            clearSize();
+        };
+
+        it("should do what every key the table lists says it does", () => {
+            // The keypresses are the ones the table lists, in the shape readline
+            // reports them, so a table entry with nothing behind it fails here
+            // instead of passing for a key the handler quietly ignores. More than
+            // one key on an entry is one thing to do rather than two, and every
+            // one of them is pressed: esc and ctrl+c both have to quit.
+            BINDINGS.forEach((binding) => {
+                binding.keys.forEach((key) => {
+                    freshRun();
+                    expectAction[binding.action](() =>
+                        process.stdin.emit("keypress", "", key),
+                    );
+                });
+            });
+        });
+
+        it("should do nothing for a key the table does not list", () => {
+            // The keys a binding is most likely to reach for next, and the ones
+            // readline names that a stray branch would answer to. Nothing here
+            // changes what the timer shows, so a key bound in the handler but
+            // missing from the table - the drift this table exists to make
+            // impossible - fails on the line it stopped, reset or replaced.
+            const unbound = [
+                "c",
+                "left",
+                "right",
+                "q",
+                "x",
+                "s",
+                "p",
+                "0",
+                "enter",
+                "return",
+                "tab",
+                "backspace",
+                "delete",
+                "home",
+                "end",
+                "pageup",
+                "pagedown",
+                "f1",
+            ];
+
+            unbound.forEach((name) => {
+                freshRun();
+                startRun();
+                jest.advanceTimersByTime(100);
+
+                process.stdin.emit("keypress", "", { name });
+
+                // Still counting, so the key was not a pause, a reset or a new
+                // timer, and nothing was quit or written down either.
+                jest.advanceTimersByTime(100);
+                expectWriteToContainLastTime("00:00.20");
+                expect(exitSpy).not.toHaveBeenCalled();
+                expect(fs.existsSync(settingsFile())).toBe(false);
+            });
+        });
+    });
+
     describe("when the terminal can draw digits", () => {
         it("should draw the elapsed time in block digits", () => {
             withDigitSupport(120, 40);
@@ -1000,8 +1178,8 @@ describe("app run", () => {
 
         it("should fall back to the plain line when too narrow", () => {
             // The menu is the widest row and it names the key that switches
-            // display, so the display needs 50 columns and 49 is one too few.
-            withDigitSupport(49, 40);
+            // display, so the display needs 51 columns and 50 is one too few.
+            withDigitSupport(50, 40);
             fakeTerminal();
             startRun();
             jest.advanceTimersByTime(50);
@@ -1010,7 +1188,7 @@ describe("app run", () => {
         });
 
         it("should draw the digits at exactly the width they need", () => {
-            withDigitSupport(50, 40);
+            withDigitSupport(51, 40);
             fakeTerminal();
             startRun();
             jest.advanceTimersByTime(50);
@@ -1297,7 +1475,7 @@ describe("app run", () => {
 
         it("should stay on the plain line when the terminal grows", () => {
             writeSettings(JSON.stringify({ display: "standard" }));
-            withDigitSupport(50, 10);
+            withDigitSupport(51, 10);
             const terminal = fakeTerminal();
             startRun();
             jest.advanceTimersByTime(50);

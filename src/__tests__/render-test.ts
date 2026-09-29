@@ -1,4 +1,5 @@
 import { buildDigitRows, digitsWidth, GLYPH_HEIGHT } from "../blockDigits";
+import { BINDINGS } from "../keys";
 import {
     digitsHeight,
     digitsRequiredWidth,
@@ -158,7 +159,10 @@ describe("render", () => {
         it("should name every key", () => {
             const hint = stripAnsi(renderHint());
 
-            ["r reset", "n new", "d display", "pause", "esc quit"].forEach(
+            // The label for the space key is the one the table gives it, not the
+            // one it used to have: the key pauses a running timer and starts a
+            // paused one, so a menu that said "pause" described half of it.
+            ["r reset", "n new", "d display", "␣ toggle", "esc quit"].forEach(
                 (key) => {
                     expect(hint).toContain(key);
                 },
@@ -213,7 +217,7 @@ describe("render", () => {
 
         it("should still cover three digit hours", () => {
             // The menu is wider than three digit hours, so the gate does not grow
-            // for them. Pinned as an explicit figure: the gate is 50 columns, and
+            // for them. Pinned as an explicit figure: the gate is 51 columns, and
             // 100 hours of digits draw 43, so there is real headroom rather than
             // a comparison that would hold whatever the two numbers were.
             const milliseconds = 100 * 60 * 60 * 1000;
@@ -222,7 +226,85 @@ describe("render", () => {
             );
 
             expect(drawn).toHaveLength(43);
-            expect(digitsRequiredWidth(milliseconds)).toBe(50);
+            expect(digitsRequiredWidth(milliseconds)).toBe(51);
+        });
+    });
+
+    describe("the menu", () => {
+        it("should be the whole row, written out", () => {
+            // The row as a user reads it, in the order they read it, written here
+            // rather than taken from the table: an expectation built out of the
+            // thing under test cannot fail when that thing is wrong. A change to
+            // any label is a change to this line, on purpose.
+            expect(stripAnsi(renderHint())).toBe(
+                "  r reset · n new · d display · ␣ toggle · esc quit",
+            );
+        });
+
+        it("should be the entries the key table marks, and nothing else", () => {
+            // Which bindings the menu names and which it deliberately leaves out.
+            // Both sides are pinned by action rather than by text, so a key added
+            // to the table has to be put on one side of this or the test fails:
+            // a key that is bound and invisible is a decision nobody made, and
+            // this is what stops it being the silent default.
+            const actions = (inMenu: boolean) =>
+                BINDINGS.filter((binding) => binding.inMenu === inMenu).map(
+                    (binding) => binding.action,
+                );
+
+            expect(actions(true)).toEqual([
+                "reset",
+                "newTimer",
+                "toggleDisplay",
+                "toggle",
+                "quit",
+            ]);
+            // The two that work, are in the README, and are not in the menu. They
+            // are the price of the gate: naming them is twenty-two more columns.
+            expect(actions(false)).toEqual(["moveUp", "moveDown"]);
+        });
+
+        it("should name every key the menu marks, in the table's order", () => {
+            // The row is made of the entries, one "key verb" each, joined by the
+            // separator. Checked against the table rather than a literal so that
+            // the claim being made is that the menu is generated rather than
+            // restated, which is the whole reason the table exists.
+            const marked = BINDINGS.filter((binding) => binding.inMenu);
+
+            marked.forEach((binding) => {
+                expect(stripAnsi(renderHint())).toContain(
+                    `${binding.shownAs ?? binding.keys[0].name} ${
+                        binding.label
+                    }`,
+                );
+            });
+            // And in that order, so an entry that moved in the table moved on the
+            // screen with it.
+            expect(
+                stripAnsi(renderHint())
+                    .split(" · ")
+                    .map((entry) => entry.trim()),
+            ).toEqual(
+                marked.map(
+                    (binding) =>
+                        `${binding.shownAs ?? binding.keys[0].name} ${
+                            binding.label
+                        }`,
+                ),
+            );
+        });
+
+        it("should pin the gate to the number of columns the menu takes", () => {
+            // Forty-nine characters of menu and two of indent. This is the number
+            // that decides which terminals get the block digits at all, so a
+            // wording change that moved it has to be made here on purpose rather
+            // than discovered later as a terminal that lost its digits.
+            expect(stripAnsi(renderHint())).toHaveLength(51);
+            // The width the display asks for and the width of the row it prints,
+            // which the gate is not built out of, so this fails if either moves
+            // on its own.
+            expect(hintWidth()).toBe(51);
+            expect(digitsRequiredWidth(0)).toBe(51);
         });
     });
 

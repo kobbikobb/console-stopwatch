@@ -1,4 +1,5 @@
 import { buildDigitRows, digitsWidth, GLYPH_HEIGHT } from "./blockDigits";
+import { menuText } from "./keys";
 import { millisecondsToPrettyDuration } from "./timeUtils";
 
 export type TimerSnapshot = {
@@ -16,8 +17,9 @@ const INDENT = " ".repeat(PADDING);
 
 // Printed once, at the top of the display, as the first row of the region. It is
 // now the widest thing in the display, so it is what the width gate is set by.
-const HINT_TEXT =
-    "r reset \u00b7 n new \u00b7 d display \u00b7 \u2423 pause \u00b7 esc quit";
+// Written by the key table rather than spelled out here, so the menu cannot name
+// a key the handler does not answer to.
+const HINT_TEXT = menuText();
 
 // The colour the original single line used, so a running stopwatch looks the
 // same as it always has.

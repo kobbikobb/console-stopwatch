@@ -1,6 +1,7 @@
 import readline, { type Key } from "readline";
 import type { Timer } from "./Timer";
 import { Timers } from "./Timers";
+import { findBinding, type KeyAction } from "./keys";
 import { advancedOutput, standardOutput } from "./output";
 import { millisecondsToClock } from "./timeUtils";
 import type { TimerSnapshot } from "./render";
@@ -126,11 +127,12 @@ export function run(): RunHandle {
         process.stdin.off("keypress", onKeypress);
     }
 
-    function onKeypress(_str: string | undefined, key: Key) {
-        if (!key) {
-            return;
-        }
-        if ((key.ctrl && key.name === "c") || key.name === "escape") {
+    // What each key in the table is for, as a function. The table names the set
+    // of actions and this holds one of each, so a key added there is a key whose
+    // behaviour somebody has to write here: an action with nothing behind it
+    // does not compile.
+    const actions: Record<KeyAction, () => void> = {
+        quit() {
             // Tearing the run down and ending the process are separate
             // decisions, so a caller that only wanted the stopwatch to stop
             // does not have to end the process with it. This is the CLI, where
@@ -138,28 +140,47 @@ export function run(): RunHandle {
             // nothing is left listening or drawing on the way out.
             stop();
             process.exit(0);
-        } else if (key.name === "r") {
+        },
+        reset() {
             timers.resetCurrentTimer();
-        } else if (key.name === "n") {
+        },
+        newTimer() {
             timers.addTimerAfterCurrent();
             timers.startCurrentTimer();
-        } else if (key.name === "up") {
+        },
+        moveUp() {
             timers.moveUp();
-        } else if (key.name === "down") {
+        },
+        moveDown() {
             timers.moveDown();
-        } else if (key.name === "space") {
+        },
+        toggle() {
             timers.toggleCurrentTimer();
-        } else if (key.name === "d") {
+        },
+        toggleDisplay() {
             // Switch display and remember it. The choice is written straight away
             // rather than on the way out, because esc ends the process and a
             // choice made just before pressing it should not be the one that is
             // lost.
             display = display === "advanced" ? "standard" : "advanced";
             writeDisplay(display);
+        },
+    };
+
+    function onKeypress(_str: string | undefined, key: Key) {
+        if (!key) {
+            return;
         }
-        // Anything else is ignored. Treating every unbound key as a pause meant a
-        // key aimed at nothing silently stopped the timer, which is worse than
-        // doing nothing.
+        // Which key this is and what it is for is the table's question, not this
+        // function's, so a keypress that is not in the table has nothing to
+        // dispatch to. Treating every unbound key as a pause meant a key aimed
+        // at nothing silently stopped the timer, which is worse than doing
+        // nothing.
+        const binding = findBinding(key);
+        if (!binding) {
+            return;
+        }
+        actions[binding.action]();
     }
 
     process.stdin.on("keypress", onKeypress);
