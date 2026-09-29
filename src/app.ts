@@ -2,7 +2,7 @@ import readline, { type Key } from "readline";
 import type { Timer } from "./Timer";
 import { Timers } from "./Timers";
 import { findBinding, type KeyAction } from "./keys";
-import { digitsOutput, lineOutput } from "./output";
+import { createOutput } from "./output";
 import { millisecondsToClock } from "./timeUtils";
 import type { TimerSnapshot } from "./render";
 import { hasKnownSize } from "./terminal";
@@ -33,18 +33,13 @@ export function run(): RunHandle {
         process.stdin.setRawMode(true);
     }
 
-    // Both ways of showing the timers are built once and kept, because each one
-    // remembers the rows it owns. Which one is live is a question about the
-    // terminal, so it is asked again every frame and can change when the
-    // terminal is resized.
-    const digits = digitsOutput();
-    const line = lineOutput();
-    let current = line;
-    // The display the user last asked for, remembered from the last run. The
-    // default is the block digits whenever the terminal is big enough for them,
-    // which is what the app has always done on its own, so a first run and a run
-    // with an unreadable settings file behave the same.
-    let display = readDisplay() ?? DEFAULT_DISPLAY;
+    // The display the user last asked for, remembered from the last run, and the
+    // one this run is started on. The default is the block digits whenever the
+    // terminal is big enough for them, which is what the app has always done on
+    // its own, so a first run and a run with an unreadable settings file behave
+    // the same. Which of the two ends up on the screen is not decided here: the
+    // output is handed the choice and is left to honour it if it can.
+    const output = createOutput(readDisplay() ?? DEFAULT_DISPLAY);
     let lastTitleUpdate = Number.NEGATIVE_INFINITY;
     let waitingForSizeSince: number | null = null;
 
@@ -85,24 +80,7 @@ export function run(): RunHandle {
         // size gate's decision above, not the title's own.
         updateWindowTitle(currentSnapshot.milliseconds, Date.now());
 
-        // Which display to use is a preference and a measurement, in that order.
-        // The preference says which one to try first, so the block digits stay
-        // the default and pressing d pins the plain line instead; the measurement
-        // still gets the last word, so a preference the terminal cannot honour
-        // falls back rather than drawing something it cannot draw. Handing over
-        // clears the rows the outgoing display owned, so the incoming one never
-        // draws on top of what is already there.
-        const order = display === "digits" ? [digits, line] : [line, digits];
-        const wanted =
-            order.find((provider) =>
-                provider.canDraw(currentSnapshot, others.length),
-            ) ?? line;
-        if (wanted !== current) {
-            current.clear();
-            current = wanted;
-        }
-
-        current.draw(
+        output.draw(
             currentSnapshot,
             others.map((other) => snapshot(other)),
         );
@@ -155,12 +133,13 @@ export function run(): RunHandle {
             timers.toggleCurrentTimer();
         },
         toggleDisplay() {
-            // Switch display and remember it. The choice is written straight away
-            // rather than on the way out, because esc ends the process and a
-            // choice made just before pressing it should not be the one that is
-            // lost.
-            display = display === "digits" ? "line" : "digits";
-            writeDisplay(display);
+            // Switch display and remember it. The choice is written straight
+            // away rather than on the way out, because esc ends the process and
+            // a choice made just before pressing it should not be the one that
+            // is lost. The output does the switching and hands back the display
+            // it now wants, which is the one to remember even on a terminal that
+            // cannot draw it.
+            writeDisplay(output.toggle());
         },
     };
 

@@ -1,4 +1,4 @@
-import { buildDigitRows, digitsWidth, GLYPH_HEIGHT } from "./blockDigits";
+import { buildDigitRows, digitsWidth } from "./blockDigits";
 import { menuText } from "./keys";
 import { millisecondsToPrettyDuration } from "./timeUtils";
 
@@ -64,6 +64,11 @@ export function renderHint() {
 // timer, a blank row, any other timers, and a blank row under them. This is the
 // entire layout, so whoever writes it does not have to know how the display is
 // put together, only that it is a list of rows.
+//
+// The number of rows is not kept beside these. It is their length, asked of the
+// layout rather than counted out of it a second time, so a gap added to one and
+// forgotten in the other cannot leave a gate answering for a display that does
+// not exist.
 export function renderRegion(current: TimerSnapshot, others: TimerSnapshot[]) {
     return [
         renderHint(),
@@ -83,6 +88,46 @@ export function renderRegion(current: TimerSnapshot, others: TimerSnapshot[]) {
     ];
 }
 
+// The plain line's display, as rows: the ones printed once above the line, and
+// the ones it owns and redraws in place. Assembled here for the same reason the
+// block digits are, so where the gaps go is a question this module answers once
+// for both displays rather than something a caller places by hand.
+//
+// `region` is whether the line is a display in its own right - rows it owns and
+// a redraw can travel back up to - or a single row the cursor is left on, which
+// is the only thing a terminal that cannot move its cursor can redraw. When it
+// is one, the line gets the blank row under it that the block digits end with,
+// and the keys above it get the gap under them that the digits put under their
+// menu, so the two are not two different rhythms. When it is not, neither gap
+// exists: there is nowhere to put one that a redraw could take back.
+//
+// `menuFits` is whether the keys can be printed on one row. Nothing is left
+// above the line when they cannot, rather than a menu that took a second row
+// the line knows nothing about.
+export function renderLine(
+    snapshot: TimerSnapshot,
+    options: { region: boolean; menuFits: boolean },
+) {
+    return {
+        // The gap under the keys belongs to the keys, so there is no gap at all
+        // when they are not printed. Anything else would be a blank row above the
+        // line that nothing put there, and the line would be a row lower than the
+        // rows it owns, which is the thing a redraw cannot measure itself from.
+        above: !options.menuFits
+            ? []
+            : options.region
+              ? [renderHint(), ""]
+              : [renderHint()],
+        // The blank row under the display is not a gap between two things: it is
+        // the last row of the display, and it stays whether or not anything
+        // follows it, so the region is as tall with nothing under the timer as
+        // it is with a listed timer.
+        rows: options.region
+            ? [renderPlainLine(snapshot), ""]
+            : [renderPlainLine(snapshot)],
+    };
+}
+
 // The width the display needs at this elapsed time. A row that wraps takes a
 // second line the cursor arithmetic does not know about, so the gate has to
 // cover every row the display draws: the digits, which grow a column per extra
@@ -99,17 +144,10 @@ export function hintWidth() {
     return INDENT.length + HINT_TEXT.length;
 }
 
-// The keys, the gap under them, five rows of digits, the gap under the timer,
-// one row per listed timer, and the blank row under them. The redraw moves up
-// this many rows to get back to where it started, and every one of them has to
-// fit, otherwise the write scrolls the screen and the redraw lands somewhere the
-// cursor arithmetic cannot describe.
-export function digitsHeight(listedTimers: number) {
-    return GLYPH_HEIGHT + listedTimers + 4;
-}
-
 // The single line of elapsed time. Same colour rule as the block digits, so the
-// same stopped timer is not orange in one display and grey in the other.
+// same stopped timer is not orange in one display and grey in the other. The
+// display it belongs to is renderLine above, which is what decides whether it
+// is a row of a region or a row of its own.
 export function renderPlainLine(snapshot: TimerSnapshot) {
     return foreground(
         colorFor(snapshot.isRunning),

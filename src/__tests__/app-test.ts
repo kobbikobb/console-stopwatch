@@ -1238,6 +1238,32 @@ describe("app run", () => {
 
             expectPlainLine();
         });
+
+        it("should keep drawing when the terminal stops moving the cursor", () => {
+            withDigitSupport(120, 40);
+            const terminal = fakeTerminal();
+            startRun();
+            jest.advanceTimersByTime(50);
+            expectDigits();
+
+            // A terminal that stops answering the cursor half way through a run.
+            // The digits have taken nine rows that it can no longer travel back
+            // up to, and there is no way to hand those back - but the handover to
+            // the plain line still has to happen, and it has to happen without
+            // the stopwatch dying over a terminal that was answering a moment
+            // ago. Every move of the cursor is made through a guard for this, and
+            // the guard is the whole of the fix: unguarded it is a TypeError out
+            // of the middle of the wipe, which is thrown from a setInterval and
+            // takes the process with it.
+            //
+            // attach() installs the model and the model brings the cursor
+            // functions with it, so the support has to be taken away afterwards.
+            terminal.attach();
+            withoutDigitSupport();
+
+            expect(() => jest.advanceTimersByTime(50)).not.toThrow();
+            expectPlainLine();
+        });
     });
 
     describe("when the terminal size is not known", () => {

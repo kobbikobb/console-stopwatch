@@ -1,12 +1,12 @@
 import { buildDigitRows, digitsWidth, GLYPH_HEIGHT } from "../blockDigits";
 import { BINDINGS } from "../keys";
 import {
-    digitsHeight,
     digitsRequiredWidth,
     hintWidth,
     PADDING,
     renderDigits,
     renderHint,
+    renderLine,
     renderListedTimer,
     renderPlainLine,
     renderRegion,
@@ -308,19 +308,26 @@ describe("render", () => {
         });
     });
 
-    describe("digitsHeight", () => {
-        it("should be the menu, two gaps, the glyph height and the blank row", () => {
-            expect(digitsHeight(0)).toBe(GLYPH_HEIGHT + 4);
-        });
-
-        it("should add a row per other timer", () => {
-            expect(digitsHeight(2)).toBe(GLYPH_HEIGHT + 4 + 2);
-        });
-    });
-
     describe("renderRegion", () => {
         const current = { milliseconds: 5000, isRunning: true };
         const digits = renderDigits(current);
+
+        it("should be the menu, two gaps, the glyph height and the blank row", () => {
+            // The height of the display is the length of the rows it renders and
+            // nothing else. It used to be a formula of its own, which meant the
+            // rows and the number they claimed to be were two things that had to
+            // agree; asking the rows is how they cannot disagree.
+            expect(renderRegion(current, []).length).toBe(GLYPH_HEIGHT + 4);
+        });
+
+        it("should add a row per other timer", () => {
+            expect(
+                renderRegion(current, [
+                    { milliseconds: 1000, isRunning: true },
+                    { milliseconds: 2000, isRunning: false },
+                ]).length,
+            ).toBe(GLYPH_HEIGHT + 4 + 2);
+        });
 
         it("should be the menu, a gap, the timer, a gap and a blank row", () => {
             const rows = renderRegion(current, []);
@@ -353,6 +360,62 @@ describe("render", () => {
             expect(stripAnsi(rows[GLYPH_HEIGHT + 3])).toContain("00:01.00");
             expect(stripAnsi(rows[GLYPH_HEIGHT + 4])).toContain("00:02.00");
             expect(rows[GLYPH_HEIGHT + 5]).toBe("");
+        });
+    });
+
+    describe("renderLine", () => {
+        const current = { milliseconds: 5000, isRunning: true };
+        const line = renderPlainLine(current);
+
+        it("should be the line on its own, with the keys above it", () => {
+            const { above, rows } = renderLine(current, {
+                region: false,
+                menuFits: true,
+            });
+
+            // One row, which is the whole point of the unpadded form: whether a
+            // row gets a newline after it is a question about the bytes and lives
+            // with the writer, and it can only hold if a display that owns a
+            // region is never a single row. A newline here would park the cursor
+            // on the row below and scroll the screen a row per frame.
+            expect(rows).toEqual([line]);
+            expect(above).toEqual([renderHint()]);
+        });
+
+        it("should be the line and a blank row when it is a region", () => {
+            const { above, rows } = renderLine(current, {
+                region: true,
+                menuFits: true,
+            });
+
+            // The two displays are the same rhythm at two scales: the keys, a gap,
+            // the timer, a blank row under it. The blank row under the display is
+            // the one the block digits end with, and the gap under the keys is the
+            // one they put under their menu - so both are compared to the digits'
+            // own rows rather than to a literal, and a gap that moved in one of
+            // the two renderers fails here.
+            const digits = renderRegion(current, []);
+            expect(rows).toEqual([line, ""]);
+            expect(rows[rows.length - 1]).toBe(digits[digits.length - 1]);
+            expect(above).toEqual(digits.slice(0, 2));
+            expect(above[1]).toBe("");
+        });
+
+        it("should leave nothing above the line when the menu would wrap", () => {
+            // Both ways of drawing, because the menu is a row the region counts
+            // when it is printed above the line and not counted at all when it
+            // is inside it. Either way the line keeps its two rows and only the
+            // rows above it are dropped, so a menu that does not fit can never
+            // change what the display itself takes up.
+            expect(
+                renderLine(current, { region: true, menuFits: false }).rows,
+            ).toHaveLength(2);
+            expect(
+                renderLine(current, { region: true, menuFits: false }).above,
+            ).toEqual([]);
+            expect(
+                renderLine(current, { region: false, menuFits: false }).above,
+            ).toEqual([]);
         });
     });
 
