@@ -28,23 +28,29 @@ describe("Timers", () => {
         expect(timers.getCurrentTimer().isRunning()).toBe(true);
     });
 
-    it("should not move the cursor when changing timer", () => {
-        // The display is redrawn from the top of its own region, so anything
-        // that moves the cursor here would push it out of place.
-        const moveCursor = jest.fn();
-        process.stdout.moveCursor = moveCursor as unknown as (
-            x: number,
-            y: number,
-        ) => boolean;
+    it("should only change which timer is current", () => {
+        // Moving is a change of the index and nothing else. The display is
+        // redrawn from the top of its own region, so a move that touched a timer
+        // - one added, started or stopped - would leave the rows on the screen
+        // describing something that is no longer true.
         const timers = new Timers();
+        timers.startCurrentTimer();
+        // The timer a new one is added after becomes the current one, so the two
+        // are named from there and not from the order they were made in.
         timers.addTimer();
+        timers.startCurrentTimer();
+        const second = timers.getCurrentTimer();
+        const first = timers.getOtherTimers()[0];
 
         timers.moveUp();
         timers.moveDown();
         timers.moveUp();
         timers.moveUp();
 
-        expect(moveCursor).not.toHaveBeenCalled();
+        expect(timers.getIndex()).toBe(0);
+        expect(timers.getCurrentTimer()).toBe(first);
+        expect(timers.getOtherTimers()).toEqual([second]);
+        expect([first.isRunning(), second.isRunning()]).toEqual([true, true]);
     });
 
     describe("getOtherTimers", () => {

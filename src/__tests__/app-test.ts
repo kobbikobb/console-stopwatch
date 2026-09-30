@@ -4,6 +4,7 @@ import path from "path";
 import { run, type RunHandle } from "../app";
 import { GLYPH_HEIGHT } from "../blockDigits";
 import { BINDINGS, type KeyAction } from "../keys";
+import { isDumbTerminal } from "../terminal";
 
 const ESC = String.fromCharCode(27);
 
@@ -14,55 +15,24 @@ const RUNNING_COLOUR = 214;
 const STOPPED_COLOUR = 244;
 const coloured = (colour: number) => `${ESC}[38;5;${colour}m`;
 
+// The terminal every run in this file draws on, and the roomy one most of them
+// want: the block digits need 51 columns and 10 rows, the menu 51 columns and
+// one, so a terminal this size leaves the gate free to be about whatever the
+// test is about.
+const ROOMY = { columns: 120, rows: 40 };
+// Wide enough for the menu, far too short for the block digits, so the fallback
+// prints the keys above the line.
+const SHORT = { columns: 120, rows: 5 };
+
 describe("app run", () => {
     const exitSpy = jest.spyOn(process, "exit").mockImplementation();
-    const setRawMode = jest.fn();
-    const clearLine = jest.fn();
-    const cursorTo = jest.fn();
-    const write = jest.fn();
 
-    // What the stream and the terminal looked like before this file put its own
-    // on them. The process is shared with every other test file in the worker,
-    // so anything left behind is still in place for the next one: a silent
-    // stdout.write, a terminal that can no longer move its cursor, or a stdin
-    // left in raw mode.
-    const originalWrite = process.stdout.write;
-    const originalClearLine = process.stdout.clearLine;
-    const originalCursorTo = process.stdout.cursorTo;
-    const originalMoveCursor = process.stdout.moveCursor;
-    const originalClearScreenDown = process.stdout.clearScreenDown;
-    const originalSetRawMode = process.stdin.setRawMode;
-
-    process.stdin.setRawMode = setRawMode;
-    process.stdout.clearLine = clearLine;
-    process.stdout.cursorTo = cursorTo;
-    process.stdout.write = write;
-
-    const originalTerm = process.env.TERM;
-    const originalColumns = process.stdout.columns;
-    const originalRows = process.stdout.rows;
-    const originalIsTTY = process.stdout.isTTY;
-    const originalConfigHome = process.env.XDG_CONFIG_HOME;
-
-    // Assigning undefined to an environment variable sets it to the string
-    // "undefined" rather than removing it, which would leave every later test
-    // reading a path called undefined.
     const restoreEnv = (name: string, value: string | undefined) => {
         if (value === undefined) {
             delete process.env[name];
             return;
         }
         process.env[name] = value;
-    };
-
-    // A property that was never there has to be taken away again rather than
-    // set to undefined, so the streams are left the shape they were found in.
-    const restoreProperty = (target: object, name: string, value: unknown) => {
-        if (value === undefined) {
-            delete (target as Record<string, unknown>)[name];
-            return;
-        }
-        (target as Record<string, unknown>)[name] = value;
     };
 
     // Every run this file starts, so every one of them can be stopped again. A
@@ -74,7 +44,7 @@ describe("app run", () => {
     const startedRuns: RunHandle[] = [];
 
     const startRun = () => {
-        const handle = run();
+        const handle = run(terminal.handle);
         startedRuns.push(handle);
         return handle;
     };
@@ -105,88 +75,70 @@ describe("app run", () => {
 
     const readSettings = () => fs.readFileSync(settingsFile(), "utf8");
 
+    // What a terminal reports of itself. A width that is missing is a width it
+    // has not reported, which is a different answer from a width of zero, so
+    // the two are set separately here and are never derived from one another.
+    type TerminalConfig = {
+        columns?: number;
+        rows?: number;
+        isTTY?: boolean;
+        canMoveCursor?: boolean;
+    };
+
     // A terminal that keeps track of where the cursor is and what is on the
-    // screen, so a redraw can be checked by where the next write lands and by
-    // what the previous one left behind.
-    const fakeTerminal = () => {
-        const terminal = {
-            row: 0,
-            column: 0,
-            // One string per row. A row that was never written to is empty, so
-            // leftover content from a region that shrank is visible.
-            screen: [] as string[],
-            writeStarts: [] as { row: number; column: number }[],
-            // A terminal that has filled the last column does not wrap until
-            // something else is written, so a row that fits exactly is one row.
-            pendingWrap: false,
-            // Resizing replaces the cursor functions, so a test that resizes
-            // has to put the model back afterwards.
-            attach: () => {
-                process.stdout.clearLine =
-                    terminal.clearLine as typeof process.stdout.clearLine;
-                process.stdout.cursorTo = ((x: number) => {
-                    terminal.column = Math.max(0, x);
-                    terminal.pendingWrap = false;
-                }) as typeof process.stdout.cursorTo;
-                process.stdout.moveCursor = ((x: number, y: number) => {
-                    terminal.column = Math.max(0, terminal.column + x);
-                    terminal.row = Math.max(0, terminal.row + y);
-                    terminal.pendingWrap = false;
-                    return true;
-                }) as typeof process.stdout.moveCursor;
-                process.stdout.clearScreenDown = (() => {
-                    terminal.screen.length = Math.min(
-                        terminal.screen.length,
-                        terminal.row + 1,
-                    );
-                    process.stdout.clearLine(1);
-                }) as typeof process.stdout.clearScreenDown;
-            },
-            clearLine: (mode: number) => {
-                const line = terminal.screen[terminal.row] || "";
-                // 0 erases to the start of the row, 1 to the end of it.
-                terminal.screen[terminal.row] =
-                    mode === 0
-                        ? " ".repeat(terminal.column) +
-                          line.slice(terminal.column)
-                        : line.slice(0, terminal.column);
-            },
-            put: (character: string) => {
-                if (terminal.pendingWrap) {
-                    terminal.row += 1;
-                    terminal.column = 0;
-                    terminal.pendingWrap = false;
-                }
-                while (terminal.screen.length <= terminal.row) {
-                    terminal.screen.push("");
-                }
-                const line = terminal.screen[terminal.row].padEnd(
-                    terminal.column,
-                    " ",
-                );
-                terminal.screen[terminal.row] =
-                    line.slice(0, terminal.column) +
-                    character +
-                    line.slice(terminal.column + 1);
-                terminal.column += 1;
-                // A real terminal wraps, and a wrapped row is the case the
-                // width gate exists to prevent.
-                if (
-                    typeof process.stdout.columns === "number" &&
-                    terminal.column >= process.stdout.columns
-                ) {
-                    terminal.pendingWrap = true;
-                }
-            },
+    // screen, and the handle a run draws through: one thing rather than a model
+    // plus a set of capabilities that could disagree with it. Every row on the
+    // screen got there through the handle, so a redraw can be checked by where
+    // the next write lands and by what the previous one left behind.
+    const fakeTerminal = (config: TerminalConfig = {}) => {
+        const answers = { ...config };
+        const screen: string[] = [];
+        const writes: string[] = [];
+        const writeStarts: { row: number; column: number }[] = [];
+        const moves: { dx: number; dy: number }[] = [];
+        let row = 0;
+        let column = 0;
+        // A terminal that has filled the last column does not wrap until
+        // something else is written, so a row that fits exactly is one row.
+        let pendingWrap = false;
+
+        const put = (character: string) => {
+            if (pendingWrap) {
+                row += 1;
+                column = 0;
+                pendingWrap = false;
+            }
+            while (screen.length <= row) {
+                // A row that was never written to is empty, so leftover content
+                // from a region that shrank is visible.
+                screen.push("");
+            }
+            const line = screen[row].padEnd(column, " ");
+            screen[row] =
+                line.slice(0, column) + character + line.slice(column + 1);
+            column += 1;
+            // A real terminal wraps, and a wrapped row is the case the width
+            // gate exists to prevent.
+            if (
+                typeof answers.columns === "number" &&
+                column >= answers.columns
+            ) {
+                pendingWrap = true;
+            }
         };
-        terminal.attach();
-        const realWrite = write.getMockImplementation();
-        write.mockImplementation((chunk: unknown) => {
-            const text = String(chunk);
-            terminal.writeStarts.push({
-                row: terminal.row,
-                column: terminal.column,
-            });
+
+        // 0 erases to the start of the row, 1 to the end of it.
+        const clearLine = (mode: number) => {
+            const line = screen[row] || "";
+            screen[row] =
+                mode === 0
+                    ? " ".repeat(column) + line.slice(column)
+                    : line.slice(0, column);
+        };
+
+        const write = (text: string) => {
+            writes.push(text);
+            writeStarts.push({ row, column });
             for (let index = 0; index < text.length; index++) {
                 const character = text[index];
                 // Step over the escape sequences: CSI ends on a letter, OSC on
@@ -206,63 +158,90 @@ describe("app run", () => {
                     continue;
                 }
                 if (character === "\n") {
-                    terminal.row += 1;
-                    terminal.column = 0;
-                    terminal.pendingWrap = false;
+                    row += 1;
+                    column = 0;
+                    pendingWrap = false;
                     continue;
                 }
-                terminal.put(character);
+                put(character);
             }
-            return realWrite ? realWrite(chunk) : true;
-        });
+        };
+
+        const moveCursor = (dx: number, dy: number) => {
+            column = Math.max(0, column + dx);
+            row = Math.max(0, row + dy);
+            pendingWrap = false;
+            moves.push({ dx, dy });
+        };
+
+        return {
+            screen,
+            writes,
+            writeStarts,
+            moves,
+            get row() {
+                return row;
+            },
+            get column() {
+                return column;
+            },
+            write,
+            // A resize is the terminal starting to report something else, and
+            // nothing more: the model and the answers are the same object, so a
+            // test cannot move the size the app is given and leave the screen
+            // behind. Answers that are not in it are the ones kept, which is
+            // what a terminal that only changed its height looks like.
+            resize(next: TerminalConfig) {
+                Object.assign(answers, next);
+            },
+            // What a run is handed. Every answer is read here and now rather
+            // than kept, so a resize is answered by the terminal as it is on the
+            // next frame. Whether the terminal is a dumb one is production's
+            // question, asked by the real predicate, so the one thing this adds
+            // is what the stream itself would have said.
+            handle: {
+                write,
+                toStartOfRow: () => {
+                    column = 0;
+                    pendingWrap = false;
+                },
+                moveCursor,
+                eraseToEndOfRow: () => clearLine(1),
+                eraseBelow: () => {
+                    screen.length = Math.min(screen.length, row + 1);
+                    clearLine(1);
+                },
+                size: () => ({
+                    columns: answers.columns,
+                    rows: answers.rows,
+                }),
+                isTerminal: () => answers.isTTY === true,
+                canMoveCursor: () =>
+                    answers.canMoveCursor === true && !isDumbTerminal(),
+            },
+        };
+    };
+
+    // The terminal the next run draws on, rebuilt for every test so a resize in
+    // one of them cannot be the size the next one starts on.
+    let terminal: ReturnType<typeof fakeTerminal>;
+
+    const useTerminal = (config?: TerminalConfig) => {
+        terminal = fakeTerminal(config);
         return terminal;
     };
 
-    const withDigitSupport = (columns: number, rows: number) => {
-        Object.defineProperty(process.stdout, "columns", {
-            value: columns,
-            configurable: true,
-        });
-        Object.defineProperty(process.stdout, "rows", {
-            value: rows,
-            configurable: true,
-        });
-        process.stdout.moveCursor = jest.fn();
-        process.stdout.clearScreenDown = jest.fn();
-    };
-
-    const withoutDigitSupport = () => {
-        process.stdout.moveCursor = undefined as unknown as (
-            x: number,
-            y: number,
-        ) => boolean;
-        process.stdout.clearScreenDown = undefined as unknown as () => boolean;
-    };
-
-    const clearSize = () => {
-        Object.defineProperty(process.stdout, "columns", {
-            value: undefined,
-            configurable: true,
-        });
-        Object.defineProperty(process.stdout, "rows", {
-            value: undefined,
-            configurable: true,
-        });
-    };
+    const originalTerm = process.env.TERM;
+    const originalConfigHome = process.env.XDG_CONFIG_HOME;
 
     beforeEach(() => {
         jest.useFakeTimers();
-        withoutDigitSupport();
-        clearSize();
-        // A terminal that says nothing about its size and still says it is a
-        // TTY is treated as one whose size has not come back yet, which makes
-        // the app wait rather than draw, so leaving it to whatever the test
-        // before this one set would silently skip the drawing. The tests that
-        // are about such a terminal say so themselves.
-        Object.defineProperty(process.stdout, "isTTY", {
-            value: false,
-            configurable: true,
-        });
+        // A terminal that says nothing about its size, cannot move its cursor
+        // and is not a TTY, so a test that needs any of those has to say so. It
+        // is also the terminal that makes the app draw at all: a terminal that
+        // says nothing about its size and still says it is a TTY is treated as
+        // one whose size has not come back yet, and the app waits.
+        useTerminal();
         restoreEnv("TERM", originalTerm);
         settingsHome = fs.mkdtempSync(
             path.join(os.tmpdir(), "stopwatch-test-"),
@@ -280,13 +259,6 @@ describe("app run", () => {
         );
         fs.rmSync(settingsHome, { recursive: true, force: true });
         exitSpy.mockReset();
-        setRawMode.mockReset();
-        clearLine.mockReset();
-        cursorTo.mockReset();
-        write.mockReset();
-        // The cursor model replaces this, so put the plain mock back for the
-        // tests that do not install one.
-        process.stdout.cursorTo = cursorTo;
     });
 
     afterAll(() => {
@@ -295,42 +267,28 @@ describe("app run", () => {
         // listener back off, so there is nothing here left to take off by
         // force. removeAllListeners would take listeners this file never added,
         // and the next test file would inherit a stdin with none of them.
-        restoreProperty(process.stdout, "write", originalWrite);
-        restoreProperty(process.stdout, "clearLine", originalClearLine);
-        restoreProperty(process.stdout, "cursorTo", originalCursorTo);
-        restoreProperty(process.stdout, "moveCursor", originalMoveCursor);
-        restoreProperty(
-            process.stdout,
-            "clearScreenDown",
-            originalClearScreenDown,
-        );
-        restoreProperty(process.stdin, "setRawMode", originalSetRawMode);
         restoreEnv("TERM", originalTerm);
         restoreEnv("XDG_CONFIG_HOME", originalConfigHome);
-        Object.defineProperty(process.stdout, "columns", {
-            value: originalColumns,
-            configurable: true,
-        });
-        Object.defineProperty(process.stdout, "rows", {
-            value: originalRows,
-            configurable: true,
-        });
-        Object.defineProperty(process.stdout, "isTTY", {
-            value: originalIsTTY,
-            configurable: true,
-        });
     });
 
+    const lastWrite = () => terminal.writes[terminal.writes.length - 1];
+
+    // Every write that carries a time, which is every frame: the rows printed
+    // above the display once are the keys and nothing else, so what is left is
+    // the readings themselves, one write each.
+    const readings = () =>
+        terminal.writes.filter((text) => /\d\d:\d\d\.\d\d/.test(text));
+
     const expectWriteToContainTime = (time: string) => {
-        expect(write).toHaveBeenCalledWith(expect.stringContaining(time));
+        expect(terminal.writes).toContainEqual(expect.stringContaining(time));
     };
 
     const expectWriteToContainLastTime = (time: string | RegExp) => {
         if (time instanceof RegExp) {
-            expect(write).toHaveBeenLastCalledWith(expect.stringMatching(time));
+            expect(lastWrite()).toMatch(time);
             return;
         }
-        expect(write).toHaveBeenLastCalledWith(expect.stringContaining(time));
+        expect(lastWrite()).toContain(time);
     };
 
     // The block digits are made of block characters, the plain line is text, so
@@ -354,13 +312,12 @@ describe("app run", () => {
         );
 
     // The five rows of block digits, as they are on the screen.
-    const digitRows = (terminal: { screen: string[] }) =>
-        terminal.screen.slice(2, 2 + GLYPH_HEIGHT);
+    const digitRows = () => terminal.screen.slice(2, 2 + GLYPH_HEIGHT);
 
     // The same rows as they were written, colour and all. The screen model steps
     // over the escape sequences, so the colour is only in the write.
     const writtenDigits = () =>
-        String(write.mock.calls[write.mock.calls.length - 1][0])
+        lastWrite()
             .split("\n")
             .slice(2, 2 + GLYPH_HEIGHT);
 
@@ -376,15 +333,22 @@ describe("app run", () => {
                 .trim(),
         );
 
+    // A run on a terminal that can draw the block digits.
+    const roomyRun = (config: TerminalConfig = ROOMY) => {
+        useTerminal({ isTTY: true, canMoveCursor: true, ...config });
+        startRun();
+    };
+
     describe("a stopped timer", () => {
         // The block digits always greyed a stopped timer, so switching to the
         // plain line with d used to show the same stopped timer in orange. The
         // two displays have to agree or the key looks like it changed something
         // it did not.
         it("should grey the plain line, as the block digits already did", () => {
-            withDigitSupport(120, 5);
-            fakeTerminal();
-            startRun();
+            // Wide and tall enough for the digits, too short for the block
+            // digits on the last frame: the plain line is the live display, and
+            // it is padded because the redraw can travel back up to it.
+            roomyRun(SHORT);
             jest.advanceTimersByTime(50);
             expectPlainLine(true);
 
@@ -395,26 +359,19 @@ describe("app run", () => {
         });
 
         it("should still grey the block digits", () => {
-            withDigitSupport(120, 40);
-            fakeTerminal();
-            startRun();
+            roomyRun();
             process.stdin.emit("data", Buffer.from(" "));
             jest.advanceTimersByTime(50);
 
             // The menu is dim as well, so the digit rows are looked at rather
             // than the whole write.
-            const rows = String(
-                write.mock.calls[write.mock.calls.length - 1][0],
-            ).split("\n");
-            rows.slice(2, 2 + GLYPH_HEIGHT).forEach((row) => {
+            writtenDigits().forEach((row) => {
                 expect(row).toContain(coloured(STOPPED_COLOUR));
             });
         });
 
         it("should not grey a running timer on either display", () => {
-            withDigitSupport(120, 5);
-            fakeTerminal();
-            startRun();
+            roomyRun(SHORT);
             jest.advanceTimersByTime(50);
 
             expectPlainLine(true);
@@ -422,12 +379,9 @@ describe("app run", () => {
     });
 
     it("should write a hint line above the plain line", () => {
-        // The cursor model brings the cursor functions with it, and a terminal
-        // that can move its cursor also gets a gap under the keys, so they are
-        // taken away again to keep this the terminal that can only draw the one
-        // line the app has always drawn.
-        const terminal = fakeTerminal();
-        withoutDigitSupport();
+        // The terminal that can only draw the one line the app has always
+        // drawn, so the keys are printed above it and there is no gap under them.
+        useTerminal();
         startRun();
         jest.advanceTimersByTime(50);
 
@@ -439,19 +393,22 @@ describe("app run", () => {
     });
 
     it("should not reprint the hint above the plain line every frame", () => {
-        const terminal = fakeTerminal();
-        withoutDigitSupport();
+        useTerminal();
         startRun();
         jest.advanceTimersByTime(500);
 
         // Ten frames later the keys are still the one row they were printed as,
         // rather than a row per frame pushed down the screen, with the line
-        // still redrawn under them.
+        // still redrawn under them. The readings themselves do get a row each,
+        // because this terminal is not a screen and nothing is erasing the row
+        // a frame was written on, which is what leaves the earlier reading
+        // where it was rather than turning it into the next one.
         expect(
             terminal.screen.filter((row) => row.includes("r reset")),
         ).toHaveLength(1);
         expect(terminal.screen[0]).toContain("r reset");
-        expect(terminal.screen[1]).toContain("00:00.50");
+        expect(terminal.screen[1]).toContain("00:00.05");
+        expect(terminal.screen[10]).toContain("00:00.50");
     });
 
     it("should write elpased time", () => {
@@ -465,7 +422,13 @@ describe("app run", () => {
         startRun();
         jest.advanceTimersByTime(50);
 
-        expect(write).toHaveBeenLastCalledWith("\x1b[38;5;214m00:00.05\x1b[0m");
+        // The colour is pinned here rather than left unmentioned: the escapes
+        // are built in render and a pipe is still given them, because deciding
+        // not to is a question about the renderer rather than about how a frame
+        // is written. The trailing newline is the piped reading's own: this
+        // terminal is not a screen, so a frame that is not newline-terminated
+        // would run into the next one.
+        expect(lastWrite()).toBe("\x1b[38;5;214m00:00.05\x1b[0m\n");
     });
 
     it("should write elpased time twice", () => {
@@ -560,11 +523,11 @@ describe("app run", () => {
         });
 
         it("should stop redrawing when it is stopped", () => {
-            const terminal = fakeTerminal();
+            useTerminal();
             const handle = startRun();
             jest.advanceTimersByTime(100);
             const screen = [...terminal.screen];
-            const written = write.mock.calls.length;
+            const written = terminal.writes.length;
 
             handle.stop();
             jest.advanceTimersByTime(1000);
@@ -573,16 +536,16 @@ describe("app run", () => {
             // nobody is watching: no timer left, and a screen that stops
             // changing.
             expect(jest.getTimerCount()).toBe(0);
-            expect(write.mock.calls).toHaveLength(written);
+            expect(terminal.writes).toHaveLength(written);
             expect(terminal.screen).toEqual(screen);
         });
 
         it("should clear the redraw timer on the way out of esc", () => {
-            const terminal = fakeTerminal();
+            useTerminal();
             startRun();
             jest.advanceTimersByTime(100);
             const screen = [...terminal.screen];
-            const written = write.mock.calls.length;
+            const written = terminal.writes.length;
 
             process.stdin.emit("keypress", "", { name: "escape" });
 
@@ -595,7 +558,7 @@ describe("app run", () => {
                 keypressListenersAtStart,
             );
             jest.advanceTimersByTime(1000);
-            expect(write.mock.calls).toHaveLength(written);
+            expect(terminal.writes).toHaveLength(written);
             expect(terminal.screen).toEqual(screen);
         });
     });
@@ -642,16 +605,12 @@ describe("app run", () => {
                 // reached is gone from the line and this is what is on it now.
                 jest.advanceTimersByTime(50);
                 expectWriteToContainLastTime("00:00.05");
-                expect(write).not.toHaveBeenLastCalledWith(
-                    expect.stringContaining("00:00.15"),
-                );
+                expect(lastWrite()).not.toContain("00:00.15");
             },
             toggleDisplay(press) {
                 // The one action with no effect on the plain line, so this is the
                 // only one that needs a terminal the digits fit in.
-                withDigitSupport(120, 40);
-                fakeTerminal();
-                startRun();
+                roomyRun();
                 jest.advanceTimersByTime(50);
                 expectDigits();
 
@@ -721,15 +680,14 @@ describe("app run", () => {
             },
         };
 
-        // One live run at a time, on the plain line. A second run would answer
-        // the same keypress and write into the same mock, and which of the two
-        // writes came last would be up to the order their redraw timers fired in
-        // rather than to anything the test meant.
+        // One live run at a time, on the plain line, on a terminal of its own.
+        // A second run would answer the same keypress and write into the same
+        // terminal, and which of the two writes came last would be up to the
+        // order their redraw timers fired in rather than to anything the test
+        // meant.
         const freshRun = () => {
             stopEveryRun();
-            write.mockClear();
-            withoutDigitSupport();
-            clearSize();
+            useTerminal();
         };
 
         it("should do what every key the table lists says it does", () => {
@@ -794,9 +752,7 @@ describe("app run", () => {
 
     describe("when the terminal can draw digits", () => {
         it("should draw the elapsed time in block digits", () => {
-            withDigitSupport(120, 40);
-            const terminal = fakeTerminal();
-            startRun();
+            roomyRun();
             jest.advanceTimersByTime(50);
 
             expectDigits();
@@ -806,18 +762,15 @@ describe("app run", () => {
         });
 
         it("should draw the menu at the top as part of the display", () => {
-            withDigitSupport(120, 40);
-            const terminal = fakeTerminal();
-            startRun();
+            roomyRun();
             jest.advanceTimersByTime(50);
 
             // The menu is a row of the region rather than a line printed once
             // above, so it comes before the digits in the same write and is
             // redrawn with them.
-            const lastWrite = String(
-                write.mock.calls[write.mock.calls.length - 1][0],
-            );
-            const rows = lastWrite.split("\n").filter((row) => row.length > 0);
+            const rows = lastWrite()
+                .split("\n")
+                .filter((row) => row.length > 0);
             expect(rows[0]).toContain("esc quit");
             expect(rows[rows.length - 1]).toContain("█");
             // The row the menu is on is the row the region starts on, which is
@@ -832,18 +785,14 @@ describe("app run", () => {
         });
 
         it("should name the key that switches display in the menu", () => {
-            withDigitSupport(120, 40);
-            const terminal = fakeTerminal();
-            startRun();
+            roomyRun();
             jest.advanceTimersByTime(50);
 
             expect(terminal.screen[0]).toContain("d display");
         });
 
         it("should keep the digits on the same rows every frame", () => {
-            withDigitSupport(120, 40);
-            const terminal = fakeTerminal();
-            startRun();
+            roomyRun();
             for (let frame = 0; frame < 5; frame++) {
                 jest.advanceTimersByTime(50);
                 const row =
@@ -855,9 +804,8 @@ describe("app run", () => {
         });
 
         it("should start the first frame at the left edge", () => {
-            withDigitSupport(120, 40);
-            const terminal = fakeTerminal();
-            process.stdout.write("$ a prompt longer than ".repeat(3));
+            useTerminal({ isTTY: true, canMoveCursor: true, ...ROOMY });
+            terminal.write("$ a prompt longer than ".repeat(3));
             expect(terminal.column).toBeGreaterThan(39);
             startRun();
             jest.advanceTimersByTime(50);
@@ -868,9 +816,7 @@ describe("app run", () => {
         });
 
         it("should list the other timers under the digits", () => {
-            withDigitSupport(120, 40);
-            const terminal = fakeTerminal();
-            startRun();
+            roomyRun();
             process.stdin.emit("data", Buffer.from("n"));
             jest.advanceTimersByTime(50);
 
@@ -886,29 +832,25 @@ describe("app run", () => {
             // itself. Spelling the time out here instead would only prove the
             // screen agrees with this test, since the blocks come from the same
             // code that formats the time.
-            withDigitSupport(120, 40);
-            const terminal = fakeTerminal();
-            startRun();
+            roomyRun();
             jest.advanceTimersByTime(50);
-            const firstFrame = glyphsOf(digitRows(terminal));
+            const firstFrame = glyphsOf(digitRows());
 
             jest.advanceTimersByTime(1000);
-            expect(glyphsOf(digitRows(terminal))).not.toEqual(firstFrame);
+            expect(glyphsOf(digitRows())).not.toEqual(firstFrame);
 
             process.stdin.emit("data", Buffer.from("r"));
             jest.advanceTimersByTime(50);
 
-            expect(glyphsOf(digitRows(terminal))).toEqual(firstFrame);
+            expect(glyphsOf(digitRows())).toEqual(firstFrame);
         });
 
         it("should move between timers with the arrow keys in the block digits", () => {
-            withDigitSupport(120, 40);
-            const terminal = fakeTerminal();
-            startRun();
+            roomyRun();
             jest.advanceTimersByTime(100);
             // The digits for the first timer at a tenth of a second, kept as
             // what moving back to it has to show again.
-            const firstTimer = glyphsOf(digitRows(terminal));
+            const firstTimer = glyphsOf(digitRows());
 
             // The first timer stops at a tenth of a second and a new one starts
             // from zero, so the two show different times and the one that is not
@@ -916,7 +858,7 @@ describe("app run", () => {
             process.stdin.emit("data", Buffer.from("n"));
             jest.advanceTimersByTime(300);
             expect(terminal.screen[8]).toContain("⏸ 00:00.10");
-            expect(glyphsOf(digitRows(terminal))).not.toEqual(firstTimer);
+            expect(glyphsOf(digitRows())).not.toEqual(firstTimer);
 
             process.stdin.emit("keypress", "", { name: "up" });
             jest.advanceTimersByTime(50);
@@ -924,7 +866,7 @@ describe("app run", () => {
             // The digits are the timer that is current again, stopped at a tenth
             // of a second, so they are drawn in the stopped colour and the
             // running one is the one listed.
-            expect(glyphsOf(digitRows(terminal))).toEqual(firstTimer);
+            expect(glyphsOf(digitRows())).toEqual(firstTimer);
             writtenDigits().forEach((row) => {
                 expect(row).toContain(coloured(STOPPED_COLOUR));
             });
@@ -934,7 +876,7 @@ describe("app run", () => {
             jest.advanceTimersByTime(50);
 
             // And back to the new one, running, with the other listed again.
-            expect(glyphsOf(digitRows(terminal))).not.toEqual(firstTimer);
+            expect(glyphsOf(digitRows())).not.toEqual(firstTimer);
             writtenDigits().forEach((row) => {
                 expect(row).toContain(coloured(RUNNING_COLOUR));
             });
@@ -944,9 +886,7 @@ describe("app run", () => {
         it("should not stack up rows when the display changes", () => {
             // Five rows is far too few for the digits, and wide enough for the
             // menu, so the fallback prints the menu above the line.
-            withDigitSupport(120, 5);
-            const terminal = fakeTerminal();
-            startRun();
+            roomyRun(SHORT);
             jest.advanceTimersByTime(50);
             // The menu is on row zero, the gap under it row one, the line row two
             // and the blank row under that row three, so the cursor parks below
@@ -954,8 +894,7 @@ describe("app run", () => {
             expect(terminal.row).toBe(4);
 
             for (let cycle = 0; cycle < 3; cycle++) {
-                withDigitSupport(120, 40);
-                terminal.attach();
+                terminal.resize(ROOMY);
                 terminal.writeStarts.length = 0;
                 jest.advanceTimersByTime(50);
                 expect(terminal.row).toBe(9);
@@ -968,8 +907,7 @@ describe("app run", () => {
                     terminal.writeStarts[terminal.writeStarts.length - 1],
                 ).toEqual({ row: 0, column: 0 });
 
-                withDigitSupport(120, 5);
-                terminal.attach();
+                terminal.resize(SHORT);
                 jest.advanceTimersByTime(50);
                 // Back to the plain line, wiped off the digits and drawn under
                 // the menu, which is printed again now the region no longer
@@ -979,9 +917,8 @@ describe("app run", () => {
         });
 
         it("should not drift when the display changes below other output", () => {
-            withDigitSupport(120, 40);
-            const terminal = fakeTerminal();
-            process.stdout.write("\n".repeat(7));
+            useTerminal({ isTTY: true, canMoveCursor: true, ...ROOMY });
+            terminal.write("\n".repeat(7));
             startRun();
             // Seven rows of other output, so the region starts on row seven and
             // the nine rows of the display park the cursor on row sixteen.
@@ -989,16 +926,14 @@ describe("app run", () => {
             expect(terminal.row).toBe(16);
 
             for (let cycle = 0; cycle < 3; cycle++) {
-                withDigitSupport(120, 5);
-                terminal.attach();
+                terminal.resize(SHORT);
                 jest.advanceTimersByTime(50);
                 // The menu goes on row seven, the gap row eight, the line row
                 // nine, the blank row under it row ten, so the cursor parks on
                 // row eleven.
                 expect(terminal.row).toBe(11);
 
-                withDigitSupport(120, 40);
-                terminal.attach();
+                terminal.resize(ROOMY);
                 terminal.writeStarts.length = 0;
                 jest.advanceTimersByTime(50);
                 // Back on the same row, not a row higher and not a row lower.
@@ -1011,14 +946,11 @@ describe("app run", () => {
         });
 
         it("should leave nothing of the digits behind when it falls back", () => {
-            withDigitSupport(120, 40);
-            const terminal = fakeTerminal();
-            startRun();
+            roomyRun();
             jest.advanceTimersByTime(50);
             expect(terminal.screen.some((row) => row.includes("█"))).toBe(true);
 
-            withDigitSupport(120, 5);
-            terminal.attach();
+            terminal.resize(SHORT);
             jest.advanceTimersByTime(50);
 
             // The rows the region used to own are cleared rather than left
@@ -1032,13 +964,10 @@ describe("app run", () => {
         });
 
         it("should leave nothing of the digits behind when they come back", () => {
-            withDigitSupport(120, 5);
-            const terminal = fakeTerminal();
-            startRun();
+            roomyRun(SHORT);
             jest.advanceTimersByTime(50);
 
-            withDigitSupport(120, 40);
-            terminal.attach();
+            terminal.resize(ROOMY);
             jest.advanceTimersByTime(50);
 
             // The menu and the gap the fallback printed above the line are gone,
@@ -1051,9 +980,7 @@ describe("app run", () => {
         });
 
         it("should leave a blank row under the display", () => {
-            withDigitSupport(120, 40);
-            const terminal = fakeTerminal();
-            startRun();
+            roomyRun();
             jest.advanceTimersByTime(50);
 
             // The menu is row zero, the digits rows two to six, the gap under
@@ -1074,9 +1001,7 @@ describe("app run", () => {
         });
 
         it("should keep a blank row under the timer when one is added", () => {
-            withDigitSupport(120, 40);
-            const terminal = fakeTerminal();
-            startRun();
+            roomyRun();
             jest.advanceTimersByTime(50);
 
             // This is the padding that can be seen: the row under the digits is
@@ -1103,9 +1028,7 @@ describe("app run", () => {
         });
 
         it("should leave a blank row under the plain line", () => {
-            withDigitSupport(120, 5);
-            const terminal = fakeTerminal();
-            startRun();
+            roomyRun(SHORT);
             jest.advanceTimersByTime(50);
 
             // The menu is on row zero, the gap under it row one, the line row
@@ -1129,9 +1052,7 @@ describe("app run", () => {
         });
 
         it("should clear the blank row under the plain line", () => {
-            withDigitSupport(120, 5);
-            const terminal = fakeTerminal();
-            startRun();
+            roomyRun(SHORT);
             jest.advanceTimersByTime(50);
             expect(terminal.row).toBe(4);
 
@@ -1147,19 +1068,17 @@ describe("app run", () => {
         it("should not pad the plain line on a terminal one row tall", () => {
             // Parking the cursor on the row below the line would scroll the
             // terminal a row every frame, so a one row terminal keeps the line
-            // unpadded. No model here, so the cursor calls stay observable.
-            withDigitSupport(38, 1);
-            startRun();
+            // unpadded. The moves the terminal is asked for are what a one row
+            // terminal should never be asked for.
+            roomyRun({ columns: 38, rows: 1 });
             jest.advanceTimersByTime(150);
 
             expectPlainLine();
-            expect(process.stdout.moveCursor).not.toHaveBeenCalled();
+            expect(terminal.moves).toHaveLength(0);
         });
 
         it("should not print the hint when it would wrap", () => {
-            withDigitSupport(20, 40);
-            const terminal = fakeTerminal();
-            startRun();
+            roomyRun({ columns: 20, rows: 40 });
             jest.advanceTimersByTime(50);
 
             // The hint is wider than the terminal, so it would take a second
@@ -1179,18 +1098,14 @@ describe("app run", () => {
         it("should fall back to the plain line when too narrow", () => {
             // The menu is the widest row and it names the key that switches
             // display, so the display needs 51 columns and 50 is one too few.
-            withDigitSupport(50, 40);
-            fakeTerminal();
-            startRun();
+            roomyRun({ columns: 50, rows: 40 });
             jest.advanceTimersByTime(50);
 
             expectPlainLine(true);
         });
 
         it("should draw the digits at exactly the width they need", () => {
-            withDigitSupport(51, 40);
-            fakeTerminal();
-            startRun();
+            roomyRun({ columns: 51, rows: 40 });
             jest.advanceTimersByTime(50);
 
             expectDigits();
@@ -1200,49 +1115,47 @@ describe("app run", () => {
             // The menu, the gap under it, five rows of digits, the gap under the
             // timer, the blank row under those and the row the cursor parks on
             // need ten rows. Nine is one too few.
-            withDigitSupport(120, 9);
-            fakeTerminal();
-            startRun();
+            roomyRun({ columns: 120, rows: 9 });
             jest.advanceTimersByTime(50);
 
             expectPlainLine(true);
         });
 
         it("should draw the digits at exactly the height they need", () => {
-            withDigitSupport(120, 10);
-            fakeTerminal();
-            startRun();
+            roomyRun({ columns: 120, rows: 10 });
             jest.advanceTimersByTime(50);
 
             expectDigits();
         });
 
         it("should fall back on a terminal that cannot move the cursor", () => {
-            withDigitSupport(120, 40);
-            // attach() installs the model, so the support has to be taken away
-            // after it.
-            fakeTerminal();
-            withoutDigitSupport();
-            startRun();
+            roomyRun();
+            // A terminal that cannot move its cursor is the one that has to fall
+            // back, so the capability is taken away rather than the model: the
+            // screen model and the moves it can make are one thing, and a run
+            // that asks for a move it cannot make gets nothing.
+            terminal.resize({ canMoveCursor: false });
             jest.advanceTimersByTime(50);
 
             expectPlainLine();
+            expect(terminal.moves).toHaveLength(0);
         });
 
         it("should fall back on TERM=dumb", () => {
-            withDigitSupport(120, 40);
+            roomyRun();
+            // A terminal that says it is dumb says so in the environment rather
+            // than in a property, which is why the handle answers the question
+            // of whether it can move its cursor rather than this test saying it
+            // cannot: the rule is the terminal's, and it is asked of every run.
             process.env.TERM = "dumb";
-            fakeTerminal();
-            startRun();
             jest.advanceTimersByTime(50);
 
             expectPlainLine();
+            expect(terminal.moves).toHaveLength(0);
         });
 
         it("should keep drawing when the terminal stops moving the cursor", () => {
-            withDigitSupport(120, 40);
-            const terminal = fakeTerminal();
-            startRun();
+            roomyRun();
             jest.advanceTimersByTime(50);
             expectDigits();
 
@@ -1251,15 +1164,11 @@ describe("app run", () => {
             // up to, and there is no way to hand those back - but the handover to
             // the plain line still has to happen, and it has to happen without
             // the stopwatch dying over a terminal that was answering a moment
-            // ago. Every move of the cursor is made through a guard for this, and
-            // the guard is the whole of the fix: unguarded it is a TypeError out
-            // of the middle of the wipe, which is thrown from a setInterval and
-            // takes the process with it.
-            //
-            // attach() installs the model and the model brings the cursor
-            // functions with it, so the support has to be taken away afterwards.
-            terminal.attach();
-            withoutDigitSupport();
+            // ago. Every move of the cursor is asked of the terminal first, and
+            // that question is the whole of the fix: unguarded it is a TypeError
+            // out of the middle of the wipe, which is thrown from a setInterval
+            // and takes the process with it.
+            terminal.resize({ canMoveCursor: false });
 
             expect(() => jest.advanceTimersByTime(50)).not.toThrow();
             expectPlainLine();
@@ -1268,13 +1177,9 @@ describe("app run", () => {
 
     describe("when the terminal size is not known", () => {
         it("should wait for the size and draw nothing yet", () => {
-            Object.defineProperty(process.stdout, "isTTY", {
-                value: true,
-                configurable: true,
-            });
-            withDigitSupport(120, 40);
-            clearSize();
-            const terminal = fakeTerminal();
+            // A terminal that is one, says so, and reports no size: the size has
+            // not come back yet and the app waits for it.
+            useTerminal({ isTTY: true, canMoveCursor: true });
             startRun();
             jest.advanceTimersByTime(100);
 
@@ -1290,13 +1195,7 @@ describe("app run", () => {
         });
 
         it("should give up waiting and write the plain line", () => {
-            Object.defineProperty(process.stdout, "isTTY", {
-                value: true,
-                configurable: true,
-            });
-            withDigitSupport(120, 40);
-            clearSize();
-            fakeTerminal();
+            useTerminal({ isTTY: true, canMoveCursor: true });
             startRun();
             jest.advanceTimersByTime(1500);
 
@@ -1307,12 +1206,12 @@ describe("app run", () => {
             // Zero is a number, so a terminal that reports it is not caught by
             // the check that there is a size at all, and only the check that it
             // is one fits.
-            Object.defineProperty(process.stdout, "isTTY", {
-                value: true,
-                configurable: true,
+            useTerminal({
+                isTTY: true,
+                canMoveCursor: true,
+                columns: 0,
+                rows: 40,
             });
-            withDigitSupport(0, 40);
-            const terminal = fakeTerminal();
             startRun();
             jest.advanceTimersByTime(100);
 
@@ -1344,12 +1243,12 @@ describe("app run", () => {
         });
 
         it("should treat a height of zero as a size it does not know", () => {
-            Object.defineProperty(process.stdout, "isTTY", {
-                value: true,
-                configurable: true,
+            useTerminal({
+                isTTY: true,
+                canMoveCursor: true,
+                columns: 120,
+                rows: 0,
             });
-            withDigitSupport(120, 0);
-            const terminal = fakeTerminal();
             startRun();
             jest.advanceTimersByTime(100);
 
@@ -1369,12 +1268,10 @@ describe("app run", () => {
         });
 
         it("should not wait when the output is not a terminal", () => {
-            Object.defineProperty(process.stdout, "isTTY", {
-                value: false,
-                configurable: true,
-            });
-            clearSize();
-            fakeTerminal();
+            // No TTY, so there is no size coming: the app draws the plain line
+            // straight away rather than waiting for one, and it still pads it
+            // because the redraw can travel back up to it.
+            useTerminal({ canMoveCursor: true });
             startRun();
             jest.advanceTimersByTime(50);
 
@@ -1383,23 +1280,17 @@ describe("app run", () => {
     });
 
     describe("the display toggle", () => {
-        const ROOMY = { columns: 120, rows: 40 };
-
         it("should draw the block digits when nothing has been chosen", () => {
             // The default is the display the app has always picked for itself, so
             // a first run looks like the last one.
-            withDigitSupport(ROOMY.columns, ROOMY.rows);
-            fakeTerminal();
-            startRun();
+            roomyRun();
             jest.advanceTimersByTime(50);
 
             expectDigits();
         });
 
         it("should switch to the plain line when d is pressed", () => {
-            withDigitSupport(ROOMY.columns, ROOMY.rows);
-            const terminal = fakeTerminal();
-            startRun();
+            roomyRun();
             jest.advanceTimersByTime(50);
             expectDigits();
 
@@ -1415,9 +1306,7 @@ describe("app run", () => {
         });
 
         it("should switch back to the block digits when d is pressed again", () => {
-            withDigitSupport(ROOMY.columns, ROOMY.rows);
-            fakeTerminal();
-            startRun();
+            roomyRun();
             jest.advanceTimersByTime(50);
 
             process.stdin.emit("data", Buffer.from("d"));
@@ -1431,10 +1320,8 @@ describe("app run", () => {
         });
 
         it("should remember the display it was switched to", () => {
-            withDigitSupport(ROOMY.columns, ROOMY.rows);
-            fakeTerminal();
+            roomyRun();
             const writeFile = jest.spyOn(fs, "writeFileSync");
-            startRun();
             jest.advanceTimersByTime(50);
 
             process.stdin.emit("data", Buffer.from("d"));
@@ -1463,11 +1350,9 @@ describe("app run", () => {
             // last-registered run happened to want, which is why the test above
             // has to check how many times it was written and not only what is
             // in it.
-            withDigitSupport(ROOMY.columns, ROOMY.rows);
-            fakeTerminal();
+            roomyRun();
             const writeFile = jest.spyOn(fs, "writeFileSync");
             const stopped = startRun();
-            startRun();
             jest.advanceTimersByTime(50);
 
             // Both runs are live, so both of them answer the key.
@@ -1489,9 +1374,7 @@ describe("app run", () => {
 
         it("should start on the plain line when that is what it was left on", () => {
             writeSettings(JSON.stringify({ display: "line" }));
-            withDigitSupport(ROOMY.columns, ROOMY.rows);
-            fakeTerminal();
-            startRun();
+            roomyRun();
             jest.advanceTimersByTime(50);
 
             // A terminal this size could draw the digits, so the only reason to
@@ -1501,14 +1384,19 @@ describe("app run", () => {
 
         it("should stay on the plain line when the terminal grows", () => {
             writeSettings(JSON.stringify({ display: "line" }));
-            withDigitSupport(51, 10);
-            const terminal = fakeTerminal();
+            // Just big enough for the block digits, so growing is not by itself
+            // a reason to bring them back.
+            useTerminal({
+                isTTY: true,
+                canMoveCursor: true,
+                columns: 51,
+                rows: 10,
+            });
             startRun();
             jest.advanceTimersByTime(50);
             expectPlainLine(true);
 
-            withDigitSupport(ROOMY.columns, ROOMY.rows);
-            terminal.attach();
+            terminal.resize(ROOMY);
             jest.advanceTimersByTime(50);
 
             // Two states, not three: a terminal big enough for the digits is no
@@ -1518,9 +1406,7 @@ describe("app run", () => {
 
         it("should start on the block digits when that is what it was left on", () => {
             writeSettings(JSON.stringify({ display: "digits" }));
-            withDigitSupport(ROOMY.columns, ROOMY.rows);
-            fakeTerminal();
-            startRun();
+            roomyRun();
             jest.advanceTimersByTime(50);
 
             expectDigits();
@@ -1530,9 +1416,7 @@ describe("app run", () => {
             writeSettings(
                 JSON.stringify({ display: "something else", extra: 1 }),
             );
-            withDigitSupport(ROOMY.columns, ROOMY.rows);
-            fakeTerminal();
-            startRun();
+            roomyRun();
             jest.advanceTimersByTime(50);
 
             // A file someone has edited by hand reads as nothing remembered, so
@@ -1543,9 +1427,7 @@ describe("app run", () => {
 
         it("should ignore a settings file that is not readable", () => {
             writeSettings("this is not json");
-            withDigitSupport(ROOMY.columns, ROOMY.rows);
-            fakeTerminal();
-            startRun();
+            roomyRun();
             jest.advanceTimersByTime(50);
 
             expectDigits();
@@ -1554,15 +1436,13 @@ describe("app run", () => {
         it("should still switch when the settings cannot be written", () => {
             // A read only home directory should cost the remembering, not the
             // stopwatch, so nothing is reported and the display still changes.
-            withDigitSupport(ROOMY.columns, ROOMY.rows);
+            roomyRun();
             fs.mkdirSync(path.join(settingsHome, "console-stopwatch"), {
                 recursive: true,
             });
             fs.mkdirSync(
                 path.join(settingsHome, "console-stopwatch", "settings.json"),
             );
-            fakeTerminal();
-            startRun();
             jest.advanceTimersByTime(50);
 
             process.stdin.emit("data", Buffer.from("d"));
@@ -1573,9 +1453,7 @@ describe("app run", () => {
 
         it("should fall back to the plain line when the terminal is too small", () => {
             writeSettings(JSON.stringify({ display: "digits" }));
-            withDigitSupport(120, 5);
-            fakeTerminal();
-            startRun();
+            roomyRun(SHORT);
             jest.advanceTimersByTime(50);
 
             // The measurement still gets the last word, so a remembered choice
@@ -1588,11 +1466,11 @@ describe("app run", () => {
         // The title of a window is one of the few things a user sees without
         // looking at the terminal, and a title that stopped counting would look
         // exactly like a stopwatch that had only just been started, so the times
-        // below are ones the app can only have got to by counting.
+        // below are ones the app can only have got to by counting. It is written
+        // through the same handle a frame is, which is what makes it a write to
+        // the same terminal rather than to whatever the process has open.
         const titles = () =>
-            write.mock.calls
-                .map((call) => String(call[0]))
-                .filter((text) => text.includes("⏱"));
+            terminal.writes.filter((text) => text.includes("⏱"));
 
         // The whole sequence, and not just the one value, so a title that is
         // frozen, that skips a second or that counts too fast all fail here. The
@@ -1603,9 +1481,7 @@ describe("app run", () => {
             );
 
         it("should show the elapsed time without hundredths", () => {
-            withDigitSupport(120, 40);
-            fakeTerminal();
-            startRun();
+            roomyRun();
             jest.advanceTimersByTime(1500);
 
             expectTitled("00:01");
@@ -1620,9 +1496,7 @@ describe("app run", () => {
             // Thirty-eight columns is too narrow for the block digits, so the
             // plain line is the live display. The title is the app's, not a
             // display's, so it is mirrored either way.
-            withDigitSupport(38, 40);
-            fakeTerminal();
-            startRun();
+            roomyRun({ columns: 38, rows: 40 });
             jest.advanceTimersByTime(1500);
 
             expectTitled("00:01");
@@ -1633,9 +1507,7 @@ describe("app run", () => {
         });
 
         it("should only update the title once a second", () => {
-            withDigitSupport(120, 40);
-            fakeTerminal();
-            startRun();
+            roomyRun();
             jest.advanceTimersByTime(50);
             const titleWrites = () => titles().length;
             const first = titleWrites();
@@ -1649,6 +1521,126 @@ describe("app run", () => {
             jest.advanceTimersByTime(10 * 50);
             expect(titleWrites()).toBe(first + 1);
             expectTitled("00:01");
+        });
+    });
+
+    describe("output that is not a terminal", () => {
+        // The default terminal of this file is one that says nothing about its
+        // size and is not a TTY, which is what a pipe looks like from here. It
+        // used to be indistinguishable from a screen that cannot move its
+        // cursor, and the two need not be: a pipe has nothing that erases a
+        // row, so two seconds of readings have to come out one per line to be
+        // worth reading at all.
+        const pipedRun = (config: TerminalConfig = {}) => {
+            useTerminal(config);
+            startRun();
+        };
+
+        it("should write one reading per line", () => {
+            pipedRun();
+            jest.advanceTimersByTime(500);
+
+            const lines = readings();
+            // Ten frames, and ten lines. One frame without a trailing newline
+            // would run into the next, so every one of these has to be its own
+            // line rather than one line with ten times on it.
+            expect(lines).toHaveLength(10);
+            expect(lines.every((line) => line.endsWith("\n"))).toBe(true);
+            expect(lines.map((line) => line.trim())).toEqual([
+                `${ESC}[38;5;214m00:00.05${ESC}[0m`,
+                `${ESC}[38;5;214m00:00.10${ESC}[0m`,
+                `${ESC}[38;5;214m00:00.15${ESC}[0m`,
+                `${ESC}[38;5;214m00:00.20${ESC}[0m`,
+                `${ESC}[38;5;214m00:00.25${ESC}[0m`,
+                `${ESC}[38;5;214m00:00.30${ESC}[0m`,
+                `${ESC}[38;5;214m00:00.35${ESC}[0m`,
+                `${ESC}[38;5;214m00:00.40${ESC}[0m`,
+                `${ESC}[38;5;214m00:00.45${ESC}[0m`,
+                `${ESC}[38;5;214m00:00.50${ESC}[0m`,
+            ]);
+            // And what reaches the screen is ten rows, not one: the rows the
+            // frames were written on are not taken back, because there is no
+            // cursor to take them back with.
+            expect(
+                terminal.screen.filter((row) => row.trim().length > 0),
+            ).toHaveLength(11);
+        });
+
+        it("should write no window title", () => {
+            pipedRun();
+            jest.advanceTimersByTime(1500);
+
+            // A title is what a window shows. In a file the OSC sequence means
+            // nothing, and it is written between the readings, so it has to be
+            // gone rather than trimmed: nothing here should open with ESC ].
+            expect(terminal.writes.some((text) => text.includes("\x1b]"))).toBe(
+                false,
+            );
+            expect(terminal.writes.some((text) => text.includes("⏱"))).toBe(
+                false,
+            );
+        });
+
+        it("should still write the colour, which is the renderer's decision", () => {
+            pipedRun();
+            jest.advanceTimersByTime(50);
+
+            // Not suppressed, and pinned so that stays a visible decision
+            // rather than an oversight. The escapes are built in render, which
+            // this change does not touch, so a pipe gets them until whatever
+            // builds them is told not to. The assertion is on the SGR sequence
+            // itself rather than on the whole write, because the newline above
+            // is this change and the colour is not.
+            expect(readings()[0]).toContain(`${ESC}[38;5;214m`);
+            expect(readings()[0]).toContain(`${ESC}[0m`);
+        });
+    });
+
+    describe("a terminal that cannot move its cursor", () => {
+        it("should overwrite one row on TERM=dumb and not scroll", () => {
+            // A dumb terminal is still a terminal: it is a screen that renders
+            // what it is sent as plain text, and the block digits are not plain
+            // text, so it gets the line - and the line is redrawn by erasing
+            // the row it is on. Twenty frames a second has to be twenty
+            // redraws of one row, not twenty rows a second pushing the window
+            // up, which is what asking "can the cursor move" for the newline
+            // instead of asking "is there a terminal" would have done here.
+            process.env.TERM = "dumb";
+            useTerminal({ isTTY: true, canMoveCursor: true, ...ROOMY });
+            startRun();
+            jest.advanceTimersByTime(1000);
+
+            // Two rows on the screen: the keys, printed once, and the line.
+            // Every frame overwrote the same one rather than adding to it.
+            expect(terminal.screen).toHaveLength(2);
+            expect(terminal.screen[0]).toContain("r reset");
+            expect(terminal.screen[1]).toContain("00:01.00");
+
+            // No frame is newline-terminated, which is what lets the next one
+            // erase the row instead of landing after it.
+            const frames = readings();
+            expect(frames).toHaveLength(20);
+            expect(frames.every((frame) => !frame.endsWith("\n"))).toBe(true);
+            expect(frames[19]).toContain("00:01.00");
+            // Still the same row at the end of it all, rather than 20 rows down.
+            expect(terminal.row).toBe(1);
+        });
+
+        it("should overwrite one row on a terminal without cursor methods", () => {
+            // The same screen that simply does not have the methods: a display
+            // that redraws in place needs them, so it gets the line on a row of
+            // its own, and the row is reused.
+            useTerminal({ isTTY: true, canMoveCursor: false, ...ROOMY });
+            startRun();
+            jest.advanceTimersByTime(500);
+
+            expect(terminal.screen).toHaveLength(2);
+            expect(terminal.screen[1]).toContain("00:00.50");
+            expect(terminal.moves).toHaveLength(0);
+            expect(readings().every((frame) => !frame.endsWith("\n"))).toBe(
+                true,
+            );
+            expect(terminal.row).toBe(1);
         });
     });
 });

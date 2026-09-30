@@ -5,7 +5,7 @@ import { findBinding, type KeyAction } from "./keys";
 import { createOutput } from "./output";
 import { millisecondsToClock } from "./timeUtils";
 import type { TimerSnapshot } from "./render";
-import { hasKnownSize } from "./terminal";
+import { hasKnownSize, type Terminal } from "./terminal";
 import { DEFAULT_DISPLAY, readDisplay, writeDisplay } from "./settings";
 
 const RENDER_INTERVAL_MILLISECONDS = 50;
@@ -24,10 +24,14 @@ export interface RunHandle {
     stop(): void;
 }
 
-export function run(): RunHandle {
+export function run(terminal: Terminal): RunHandle {
     const timers = new Timers();
     timers.startCurrentTimer();
 
+    // Keys are read from the process rather than from the terminal: they are
+    // something a person arrives with rather than something a display draws.
+    // Everything that does draw - the rows, the cursor, the size, even the
+    // window title - goes through the handle the caller made at the edge.
     readline.emitKeypressEvents(process.stdin);
     if (process.stdin.isTTY && typeof process.stdin.setRawMode === "function") {
         process.stdin.setRawMode(true);
@@ -39,7 +43,7 @@ export function run(): RunHandle {
     // its own, so a first run and a run with an unreadable settings file behave
     // the same. Which of the two ends up on the screen is not decided here: the
     // output is handed the choice and is left to honour it if it can.
-    const output = createOutput(readDisplay() ?? DEFAULT_DISPLAY);
+    const output = createOutput(readDisplay() ?? DEFAULT_DISPLAY, terminal);
     let lastTitleUpdate = Number.NEGATIVE_INFINITY;
     let waitingForSizeSince: number | null = null;
 
@@ -49,11 +53,20 @@ export function run(): RunHandle {
     });
 
     function updateWindowTitle(milliseconds: number, now: number) {
+        // A title is something a window shows, so a run whose output is not a
+        // terminal writes none: in a file the sequence is noise sitting in the
+        // middle of the readings, and there is no window to put a title on. The
+        // same question as everything else about the terminal, asked of the
+        // handle rather than of the environment, so a resize or a run on a
+        // different kind of output is answered the same way.
+        if (!terminal.isTerminal()) {
+            return;
+        }
         if (now - lastTitleUpdate < TITLE_INTERVAL_MILLISECONDS) {
             return;
         }
         lastTitleUpdate = now;
-        process.stdout.write(
+        terminal.write(
             `${TITLE_PREFIX}${millisecondsToClock(
                 milliseconds,
             )}${TITLE_SUFFIX}`,
@@ -61,7 +74,7 @@ export function run(): RunHandle {
     }
 
     function render() {
-        if (process.stdout.isTTY && !hasKnownSize()) {
+        if (terminal.isTerminal() && !hasKnownSize(terminal)) {
             waitingForSizeSince ??= Date.now();
             if (Date.now() - waitingForSizeSince < SIZE_WAIT_MILLISECONDS) {
                 return;

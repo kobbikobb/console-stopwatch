@@ -6,7 +6,13 @@ import {
     renderRegion,
     type TimerSnapshot,
 } from "./render";
-import { fitsOnOneRow, hasCursorMovement, terminalSize } from "./terminal";
+import {
+    fitsOnOneRow,
+    hasCursorMovement,
+    moveCursor,
+    terminalSize,
+    type Terminal,
+} from "./terminal";
 
 // One way of putting the timers on the screen. What the rows of a display are
 // lives in render, how they reach the terminal lives here, and which display is
@@ -25,7 +31,10 @@ type OutputProvider = {
 
 // The rows the last frame wrote, and the arithmetic to get back to the top of
 // them. A provider owns one of these and nothing below it touches the cursor.
-function createRegion() {
+// The terminal is handed to it rather than found by it, so the same handle
+// carries every write it makes and a display can be drawn on a terminal other
+// than the process the code is running in.
+function createRegion(terminal: Terminal) {
     // How many rows below the top of the region the cursor has ended up. Every
     // region row ends with a newline, so the cursor is parked that far down and
     // the next redraw travels all the way back up. A line written without one
@@ -40,20 +49,8 @@ function createRegion() {
     // rows on the screen.
     let rowsAbove = 0;
 
-    // Every move of the cursor goes through here rather than through
-    // process.stdout, because every move needs a terminal that can make it, and
-    // a terminal can stop answering mid-run. A region holding rows it can no
-    // longer travel back to can do nothing about that, but throwing out of the
-    // middle of a wipe is not one of the things it can do.
-    function moveCursor(dx: number, dy: number) {
-        if (!hasCursorMovement()) {
-            return;
-        }
-        process.stdout.moveCursor(dx, dy);
-    }
-
     function wipe() {
-        process.stdout.cursorTo(0);
+        terminal.toStartOfRow();
         if (drawnRows === 0) {
             return;
         }
@@ -64,18 +61,18 @@ function createRegion() {
         // never drew more than one row never had a cursor to move.
         const taller = drawnRows > 1;
         if (taller) {
-            moveCursor(0, -cursorRows);
+            moveCursor(terminal, 0, -cursorRows);
         }
         for (let row = 0; row < drawnRows; row++) {
             // 1 erases from the cursor to the end of the row, so a row that is
             // wider than what is drawn now is left clean.
-            process.stdout.clearLine(1);
+            terminal.eraseToEndOfRow();
             if (row < drawnRows - 1) {
-                moveCursor(0, 1);
+                moveCursor(terminal, 0, 1);
             }
         }
         if (taller) {
-            moveCursor(0, -(drawnRows - 1));
+            moveCursor(terminal, 0, -(drawnRows - 1));
         }
         drawnRows = 0;
         cursorRows = 0;
@@ -92,9 +89,9 @@ function createRegion() {
             // clearing from the cursor would take the rows above the display.
             return;
         }
-        process.stdout.cursorTo(0);
-        moveCursor(0, -(cursorRows + rowsAbove));
-        process.stdout.clearScreenDown();
+        terminal.toStartOfRow();
+        moveCursor(terminal, 0, -(cursorRows + rowsAbove));
+        terminal.eraseBelow();
         drawnRows = 0;
         cursorRows = 0;
         rowsAbove = 0;
@@ -121,22 +118,22 @@ function createRegion() {
             }
             clear();
             for (const row of rows) {
-                process.stdout.write(`${row}\n`);
+                terminal.write(`${row}\n`);
             }
             rowsAbove = rows.length;
         },
 
         // The rows of a display, written the way that many rows have to be
         // written: a newline after each one, so the cursor parks below them and
-        // the next frame can travel back up to the first. A single row is the
-        // exception and gets none, which leaves the cursor on it - the only
-        // thing a terminal that cannot move the cursor can redraw.
+        // the next frame can travel back up to the first. A single row gets none,
+        // and is left there for the next frame to erase it - so it is only left
+        // that way where there is a screen: isTerminal, not canMoveCursor.
         write(rows: string[]) {
             wipe();
-            const one = rows.length === 1;
-            process.stdout.write(one ? rows[0] : `${rows.join("\n")}\n`);
+            const ownRow = rows.length === 1 && terminal.isTerminal();
+            terminal.write(ownRow ? rows[0] : `${rows.join("\n")}\n`);
             drawnRows = rows.length;
-            cursorRows = one ? 0 : rows.length;
+            cursorRows = ownRow ? 0 : rows.length;
         },
     };
 }
@@ -144,18 +141,18 @@ function createRegion() {
 // The block digits. Everything the display is made of is one region - the keys,
 // a blank row, the timer, a blank row, the other timers, a blank row - so it is
 // redrawn in place and the wipe can take exactly the rows it wrote.
-function digitsOutput(): OutputProvider {
-    const region = createRegion();
+function digitsOutput(terminal: Terminal): OutputProvider {
+    const region = createRegion(terminal);
 
     return {
         canDraw(current, others) {
             // A display this tall cannot be drawn without a cursor that moves.
-            if (!hasCursorMovement()) {
+            if (!hasCursorMovement(terminal)) {
                 return false;
             }
             // One reading of the size, so the gate and the arithmetic that
             // follows it cannot be answered by two different terminals.
-            const size = terminalSize();
+            const size = terminalSize(terminal);
             if (size === null) {
                 return false;
             }
@@ -179,8 +176,8 @@ function digitsOutput(): OutputProvider {
 // The single line of text the app has always printed. It has no region to put
 // the menu in, so the menu goes once above it and stays until another provider
 // takes over the screen and reclaims the rows.
-function lineOutput(): OutputProvider {
-    const region = createRegion();
+function lineOutput(terminal: Terminal): OutputProvider {
+    const region = createRegion(terminal);
 
     return {
         // One line of text fits anywhere, so everything falls back to this.
@@ -193,19 +190,19 @@ function lineOutput(): OutputProvider {
             // back to the line can own a blank row, and a one row terminal
             // cannot spare one. An unknown height is left to pad, as an unknown
             // width is left to print the menu.
-            const rows = renderLine(current, {
+            const { rows } = terminal.size();
+            const display = renderLine(current, {
                 region:
-                    hasCursorMovement() &&
-                    (typeof process.stdout.rows !== "number" ||
-                        process.stdout.rows > 1),
-                menuFits: fitsOnOneRow(hintWidth()),
+                    hasCursorMovement(terminal) &&
+                    (typeof rows !== "number" || rows > 1),
+                menuFits: fitsOnOneRow(terminal, hintWidth()),
             });
             // The menu first, and only ever when the region is empty: either
             // this is the first frame or printAbove has just given back the rows
             // it printed, so the line can never be a row lower than the wipe
             // below is measured from.
-            region.printAbove(rows.above);
-            region.write(rows.rows);
+            region.printAbove(display.above);
+            region.write(display.rows);
         },
         clear() {
             region.clear();
@@ -228,12 +225,12 @@ export type Output = {
     draw(current: TimerSnapshot, others: TimerSnapshot[]): void;
 };
 
-export function createOutput(display: Display): Output {
+export function createOutput(display: Display, terminal: Terminal): Output {
     // Both ways of showing the timers are built once and kept, because each one
     // remembers the rows it owns. Which is live is a question about the
     // terminal, so it is asked again every frame and can change on a resize.
-    const digits = digitsOutput();
-    const line = lineOutput();
+    const digits = digitsOutput(terminal);
+    const line = lineOutput(terminal);
     let wanted = display;
     let live: OutputProvider = line;
 
