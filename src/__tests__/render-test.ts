@@ -557,8 +557,35 @@ describe("render", () => {
     describe("renderPlainLine", () => {
         it("should be the same output as before this change", () => {
             expect(renderPlainLine({ milliseconds: 50, isRunning: true })).toBe(
-                "\x1b[38;5;214m00:00.05\x1b[0m",
+                "  \x1b[38;5;214m00:00.05\x1b[0m",
             );
+        });
+
+        it("should be inset like every other row of the display", () => {
+            // The bug this pins: the line was the one row of the display with no
+            // padding, so it sat against the left edge of the terminal while the
+            // listed timers underneath it were stepped in - two displays rather
+            // than one, on the display that is the fallback for a terminal too
+            // small for the digits. The padding is asked of the renderer rather
+            // than written out, so a change to it moves all four rows at once.
+            const line = renderPlainLine({ milliseconds: 50, isRunning: true });
+            expect(stripAnsi(line).startsWith(" ".repeat(PADDING))).toBe(true);
+            expect(stripAnsi(line).length).toBe(PADDING + "00:00.05".length);
+        });
+
+        it("should line up with the listed timers under it", () => {
+            // The whole point of the padding: two rows of one display start in the
+            // same column. Compared to the listed timers rather than to a column
+            // number, so a padding that moved for one row and not the other fails
+            // here.
+            const rows = renderLine(
+                { milliseconds: 5000, isRunning: true },
+                [{ milliseconds: 1000, isRunning: false }],
+                { region: true, menuFits: true, rows: 40 },
+            );
+
+            expect(stripAnsi(rows.rows[0]).search(/\S/)).toBe(PADDING);
+            expect(stripAnsi(rows.rows[2]).search(/\S/)).toBe(PADDING);
         });
 
         it("should grey a stopped timer, as the block digits do", () => {
@@ -571,7 +598,7 @@ describe("render", () => {
             ).not.toBe(renderPlainLine({ milliseconds: 50, isRunning: true }));
             expect(
                 renderPlainLine({ milliseconds: 50, isRunning: false }),
-            ).toBe("\x1b[38;5;244m00:00.05\x1b[0m");
+            ).toBe("  \x1b[38;5;244m00:00.05\x1b[0m");
         });
     });
 });

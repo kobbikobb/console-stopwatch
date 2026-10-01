@@ -178,12 +178,15 @@ export function hintWidth() {
 }
 
 // The single line of elapsed time. Same colour rule as the block digits, so the
-// same stopped timer is not orange in one display and grey in the other. The
-// display it belongs to is renderLine above, which is what decides whether it
-// is a row of a region or a row of its own.
+// same stopped timer is not orange in one display and grey in the other. Inset by
+// the same padding as every other row, because it is a row of a display rather
+// than a line on its own: the listed timers under it are indented, and a line
+// flush against the edge with the rows under it stepped in reads as two displays
+// rather than one. The display it belongs to is renderLine above, which is what
+// decides whether it is a row of a region or a row of its own.
 export function renderPlainLine(snapshot: TimerSnapshot) {
-    return foreground(
+    return `${INDENT}${foreground(
         colorFor(snapshot.isRunning),
         millisecondsToPrettyDuration(snapshot.milliseconds),
-    );
+    )}`;
 }

@@ -4,6 +4,7 @@ import path from "path";
 import { run, type RunHandle } from "../app";
 import { GLYPH_HEIGHT } from "../blockDigits";
 import { BINDINGS, type KeyAction } from "../keys";
+import { PADDING } from "../render";
 import { isDumbTerminal } from "../terminal";
 
 const ESC = String.fromCharCode(27);
@@ -297,14 +298,18 @@ describe("app run", () => {
     // The padded form is two newlines: the line, and the blank row under it.
     // Which one is expected is the point of the argument, since the padding is
     // only there when the redraw can travel back up to the line. A stopped timer
-    // is drawn in the paused colour, which is the second argument.
+    // is drawn in the paused colour, which is the second argument. The line is
+    // inset by the same padding as every other row of the display, which is why
+    // the two spaces are here rather than only in the renderer's own expectations.
     const expectPlainLine = (padded = false, running = true) =>
         expectWriteToContainLastTime(
             new RegExp(
                 // The escape sequences have to be escaped again to be matched as
                 // themselves, since a bracket in a pattern opens a character
                 // class.
-                `^${ESC}\\[38;5;${running ? RUNNING_COLOUR : STOPPED_COLOUR}m` +
+                `^ {${PADDING}}${ESC}\\[38;5;${
+                    running ? RUNNING_COLOUR : STOPPED_COLOUR
+                }m` +
                     `\\d{2}:\\d{2}\\.\\d{2}` +
                     `${ESC}\\[0m` +
                     `${padded ? "\\n\\n" : ""}$`,
@@ -428,7 +433,7 @@ describe("app run", () => {
         // is written. The trailing newline is the piped reading's own: this
         // terminal is not a screen, so a frame that is not newline-terminated
         // would run into the next one.
-        expect(lastWrite()).toBe("\x1b[38;5;214m00:00.05\x1b[0m\n");
+        expect(lastWrite()).toBe("  \x1b[38;5;214m00:00.05\x1b[0m\n");
     });
 
     it("should write elpased time twice", () => {
@@ -1280,8 +1285,11 @@ describe("app run", () => {
             // the line is drawn below it. Where the line starts is checked
             // rather than whether the keys are on the screen, because a terminal
             // reporting a width of zero puts one character to a row, so a menu
-            // printed here would not be a row of text to look for.
-            expect(terminal.screen[0]).toBe("0");
+            // printed here would not be a row of text to look for. The padding is
+            // two of those characters, so the row the line starts on is two of
+            // them too.
+            expect(terminal.screen[0]).toBe(" ");
+            expect(terminal.screen[2]).toBe("0");
             expect(terminal.screen.some((row) => row.includes("█"))).toBe(
                 false,
             );
