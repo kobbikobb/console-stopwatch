@@ -95,8 +95,8 @@ export function renderRegion(current: TimerSnapshot, others: TimerSnapshot[]) {
 //
 // `region` is whether the line is a display in its own right - rows it owns and
 // a redraw can travel back up to - or a single row the cursor is left on, which
-// is the only thing a terminal that cannot move its cursor can redraw. When it
-// is one, the line gets the blank row under it that the block digits end with,
+// is the only thing a terminal that cannot move its cursor can redraw. When it is
+// one, the line gets the blank row under it that the block digits end with,
 // and the keys above it get the gap under them that the digits put under their
 // menu, so the two are not two different rhythms. When it is not, neither gap
 // exists: there is nowhere to put one that a redraw could take back.
@@ -104,27 +104,60 @@ export function renderRegion(current: TimerSnapshot, others: TimerSnapshot[]) {
 // `menuFits` is whether the keys can be printed on one row. Nothing is left
 // above the line when they cannot, rather than a menu that took a second row
 // the line knows nothing about.
+//
+// `rows` is the height the terminal reports, so the other timers can be listed
+// under the line on one display as well as the other. It is a measurement rather
+// than a terminal because the layout is not allowed to know what it is drawn on,
+// and undefined when the terminal has not reported one - which is left to list
+// them all, the same way an unknown width is left to print the menu.
 export function renderLine(
     snapshot: TimerSnapshot,
-    options: { region: boolean; menuFits: boolean },
+    others: TimerSnapshot[],
+    options: { region: boolean; menuFits: boolean; rows?: number },
 ) {
+    const above = !options.menuFits
+        ? []
+        : options.region
+          ? [renderHint(), ""]
+          : [renderHint()];
+
+    // The rows the display takes with nothing listed under it: the line, and the
+    // blank row under it. Counted off the rows themselves rather than out of a
+    // number kept beside them, so a row added to the display is a row the
+    // fitting below has heard about.
+    const bare = options.region
+        ? [renderPlainLine(snapshot), ""]
+        : [renderPlainLine(snapshot)];
+
+    // A listed timer is a row of the display, so a terminal with no rows to spare
+    // gets the line on its own rather than a display that scrolls a row every
+    // frame. The rows that are there either way come off the top first - the menu
+    // above the line, the line and its blank row, and the row the cursor parks on
+    // - and what is left is what the listed timers get. A display that is not a
+    // region owns one row and can redraw no other, so nothing is listed on it.
+    const taken = above.length + bare.length + 1 + 1;
+    const spare =
+        typeof options.rows === "number"
+            ? Math.max(0, Math.min(others.length, options.rows - taken))
+            : others.length;
+    const listed = options.region ? others.slice(0, spare) : [];
+
     return {
         // The gap under the keys belongs to the keys, so there is no gap at all
         // when they are not printed. Anything else would be a blank row above the
         // line that nothing put there, and the line would be a row lower than the
         // rows it owns, which is the thing a redraw cannot measure itself from.
-        above: !options.menuFits
-            ? []
-            : options.region
-              ? [renderHint(), ""]
-              : [renderHint()],
-        // The blank row under the display is not a gap between two things: it is
-        // the last row of the display, and it stays whether or not anything
-        // follows it, so the region is as tall with nothing under the timer as
-        // it is with a listed timer.
-        rows: options.region
-            ? [renderPlainLine(snapshot), ""]
-            : [renderPlainLine(snapshot)],
+        above,
+        // The same rhythm the block digits have at their scale: the timer, the gap
+        // under it, the other timers, and the blank row the display ends with.
+        // With nothing listed the gap and the blank row are one row, which is why
+        // `bare` is already the display with none listed - a listed timer opens
+        // the gap the digits keep under their timer rather than taking the blank
+        // row that display ends with away.
+        rows:
+            listed.length === 0
+                ? bare
+                : [bare[0], "", ...listed.map(renderListedTimer), ""],
     };
 }
 

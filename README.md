@@ -37,9 +37,11 @@ them. At 00:00.05, with one timer running and no others:
 ```
 
 If the terminal is too small for the digits, the display falls back to a single
-line of text, with the keys above it and a blank row underneath. The keys are
-left out when the terminal is too narrow to print them on one row, and the blank
-row when it is only one row tall or cannot move the cursor.
+line of text, with the keys above it and a blank row underneath. The other timers
+are listed under the line the same way they are under the digits, as many of them
+as the terminal has rows for. The keys are left out when the terminal is too
+narrow to print them on one row, and the blank row when it is only one row tall or
+cannot move the cursor.
 
 `d` switches between the two and remembers the choice, so the next run starts on
 the one you left it on. It is kept in `~/.config/console-stopwatch/settings.json`

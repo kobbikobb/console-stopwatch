@@ -368,7 +368,7 @@ describe("render", () => {
         const line = renderPlainLine(current);
 
         it("should be the line on its own, with the keys above it", () => {
-            const { above, rows } = renderLine(current, {
+            const { above, rows } = renderLine(current, [], {
                 region: false,
                 menuFits: true,
             });
@@ -383,7 +383,7 @@ describe("render", () => {
         });
 
         it("should be the line and a blank row when it is a region", () => {
-            const { above, rows } = renderLine(current, {
+            const { above, rows } = renderLine(current, [], {
                 region: true,
                 menuFits: true,
             });
@@ -408,14 +408,149 @@ describe("render", () => {
             // rows above it are dropped, so a menu that does not fit can never
             // change what the display itself takes up.
             expect(
-                renderLine(current, { region: true, menuFits: false }).rows,
+                renderLine(current, [], {
+                    region: true,
+                    menuFits: false,
+                }).rows,
             ).toHaveLength(2);
             expect(
-                renderLine(current, { region: true, menuFits: false }).above,
+                renderLine(current, [], { region: true, menuFits: false })
+                    .above,
             ).toEqual([]);
             expect(
-                renderLine(current, { region: false, menuFits: false }).above,
+                renderLine(current, [], {
+                    region: false,
+                    menuFits: false,
+                }).above,
             ).toEqual([]);
+        });
+
+        it("should list the other timers, as the block digits do", () => {
+            // The bug this pins: the digits listed the other timers and the plain
+            // line could not, because it was never handed any, so switching to it
+            // with d made every timer but the current one disappear. The line and
+            // the digits are two ways of showing the same timers, so the same
+            // timers have to be on the screen either way.
+            const others = [
+                { milliseconds: 1000, isRunning: true },
+                { milliseconds: 2000, isRunning: false },
+            ];
+            const { rows } = renderLine(current, others, {
+                region: true,
+                menuFits: true,
+                rows: 40,
+            });
+
+            // The rhythm the block digits have at their scale: the timer, the gap
+            // under it, a row per listed timer, and the blank row the display ends
+            // with. The listed rows and the row they end with are the digits' own,
+            // so a change to one display's layout that the other does not follow
+            // fails here rather than on a screen.
+            const digits = renderRegion(current, others);
+            expect(rows).toHaveLength(5);
+            expect(rows[0]).toBe(line);
+            expect(rows[1]).toBe("");
+            expect(rows[2]).toBe(digits[digits.length - 3]);
+            expect(rows[3]).toBe(digits[digits.length - 2]);
+            expect(rows[4]).toBe(digits[digits.length - 1]);
+            expect(stripAnsi(rows[2])).toContain("▶ 00:01.00");
+            expect(stripAnsi(rows[3])).toContain("⏸ 00:02.00");
+        });
+
+        it("should keep the gap under the line when others are listed", () => {
+            // The padding the digits keep directly under the timer is kept here
+            // for the same reason: asking for a new timer must not take it away.
+            const { rows } = renderLine(
+                current,
+                [{ milliseconds: 1000, isRunning: true }],
+                { region: true, menuFits: true, rows: 40 },
+            );
+
+            expect(rows[1]).toBe("");
+            expect(stripAnsi(rows[2])).toContain("00:01.00");
+        });
+
+        it("should list only as many others as there are rows for", () => {
+            // A listed timer is a row of the display, so listing more of them than
+            // the terminal has rows for scrolls it a row every frame. The plain
+            // line is what a terminal too short for the block digits gets, so it
+            // is exactly here that the fitting matters.
+            const others = [
+                { milliseconds: 1000, isRunning: true },
+                { milliseconds: 2000, isRunning: true },
+                { milliseconds: 3000, isRunning: true },
+            ];
+            // The menu, the gap, the line, the blank row and the row the cursor
+            // parks on are six rows whatever is listed, so seven rows is room for
+            // one listed timer and two more.
+            const { rows } = renderLine(current, others, {
+                region: true,
+                menuFits: true,
+                rows: 7,
+            });
+
+            expect(stripAnsi(rows.join("\n"))).toContain("00:01.00");
+            expect(stripAnsi(rows.join("\n"))).not.toContain("00:02.00");
+            expect(rows).toHaveLength(4);
+        });
+
+        it("should list none when the terminal has no rows to spare", () => {
+            const others = [{ milliseconds: 1000, isRunning: true }];
+            const { rows } = renderLine(current, others, {
+                region: true,
+                menuFits: true,
+                rows: 4,
+            });
+
+            expect(rows).toEqual([line, ""]);
+        });
+
+        it("should list them all when the height is unknown", () => {
+            // An unreported height is left to list them all, the way an unreported
+            // width is left to print the menu: guessing a number of rows for a
+            // terminal that has not reported one is how a display ends up drawn in
+            // the wrong place.
+            const others = [
+                { milliseconds: 1000, isRunning: true },
+                { milliseconds: 2000, isRunning: true },
+            ];
+            const { rows } = renderLine(current, others, {
+                region: true,
+                menuFits: true,
+            });
+
+            expect(rows).toHaveLength(5);
+        });
+
+        it("should list none when the line is not a region", () => {
+            // A display that is not a region is one row the cursor is left on, and
+            // a redraw can reach no other. A second row of listed timers would take
+            // a row a wipe cannot come back to.
+            const others = [{ milliseconds: 1000, isRunning: true }];
+            const { rows } = renderLine(current, others, {
+                region: false,
+                menuFits: true,
+                rows: 40,
+            });
+
+            expect(rows).toEqual([line]);
+        });
+
+        it("should give the room the menu took back to the listed timers", () => {
+            // The rows above the line are rows of the display too, so a menu that
+            // is not printed leaves a listed timer room that would otherwise go
+            // unused.
+            const others = [
+                { milliseconds: 1000, isRunning: true },
+                { milliseconds: 2000, isRunning: true },
+            ];
+            const { rows } = renderLine(current, others, {
+                region: true,
+                menuFits: false,
+                rows: 6,
+            });
+
+            expect(rows).toHaveLength(5);
         });
     });
 

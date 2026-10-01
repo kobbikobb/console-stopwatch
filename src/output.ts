@@ -182,7 +182,7 @@ function lineOutput(terminal: Terminal): OutputProvider {
     return {
         // One line of text fits anywhere, so everything falls back to this.
         canDraw: () => true,
-        draw(current) {
+        draw(current, others) {
             // Whether the line owns a region, asked once so the gap above it and
             // the blank row under it are decided by the same answer rather than
             // by a second reading of a terminal that can change between the two.
@@ -191,11 +191,17 @@ function lineOutput(terminal: Terminal): OutputProvider {
             // cannot spare one. An unknown height is left to pad, as an unknown
             // width is left to print the menu.
             const { rows } = terminal.size();
-            const display = renderLine(current, {
+            const display = renderLine(current, others, {
                 region:
                     hasCursorMovement(terminal) &&
                     (typeof rows !== "number" || rows > 1),
                 menuFits: fitsOnOneRow(terminal, hintWidth()),
+                // The other timers are listed here as well as under the block
+                // digits, and how many of them fit is the renderer's question
+                // rather than this one: it is the only place that knows what the
+                // rows of this display are. An unreported height lists them all,
+                // the way an unreported width prints the menu.
+                rows,
             });
             // The menu first, and only ever when the region is empty: either
             // this is the first frame or printAbove has just given back the rows

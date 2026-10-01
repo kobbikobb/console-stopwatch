@@ -826,6 +826,52 @@ describe("app run", () => {
             expect(terminal.row).toBe(10);
         });
 
+        it("should list the other timers under the plain line too", () => {
+            // The bug: the digits listed the other timers and the plain line
+            // could not, because the line was never handed any, so pressing d made
+            // every timer but the current one vanish. The two displays show the
+            // same timers, so the same timers are on the screen either way - and
+            // a run pinned to the line from the start has to show them too, since
+            // a terminal too small for the digits never sees them at all.
+            writeSettings(JSON.stringify({ display: "line" }));
+            roomyRun();
+            process.stdin.emit("data", Buffer.from("n"));
+            jest.advanceTimersByTime(50);
+
+            expect(terminal.screen[4]).toContain("⏸ 00:00.00");
+            // The line, the gap under it, the listed timer and the blank row under
+            // the display, under the menu and its gap, with the cursor parked below
+            // all six.
+            expect(terminal.screen[3] || "").toBe("");
+            expect(terminal.row).toBe(6);
+        });
+
+        it("should keep the other timers listed when the display is toggled", () => {
+            // Both ways of showing them, so the timers survive the key rather than
+            // appearing and disappearing as the display changes.
+            roomyRun();
+            process.stdin.emit("data", Buffer.from("n"));
+            jest.advanceTimersByTime(50);
+            expect(terminal.screen[8]).toContain("⏸ 00:00.00");
+
+            process.stdin.emit("data", Buffer.from("d"));
+            jest.advanceTimersByTime(50);
+
+            // The menu and the gap above the line are reclaimed and the line's
+            // display is drawn from the top, so the listed timer is a row under the
+            // line rather than wherever the digits left it. The line is the new
+            // timer, still running, and underneath it is the one that was replaced
+            // and stopped - the same two rows the digits had, in the same order.
+            expect(terminal.screen[2]).toContain("00:00.10");
+            expect(terminal.screen[3] || "").toBe("");
+            expect(terminal.screen[4]).toContain("⏸ 00:00.00");
+            // Not one of the blocks: the digits are gone, and they took their five
+            // rows with them rather than leaving any behind.
+            expect(
+                terminal.screen.filter((row) => row.includes("█")),
+            ).toHaveLength(0);
+        });
+
         it("should reset the timer in the block digits", () => {
             // On this display the elapsed time reaches the screen as blocks and
             // nowhere else, so what a reset has to get back to is the first frame
