@@ -1,0 +1,48 @@
+language: en-US
+reviews:
+  profile: chill
+  request_changes_workflow: true
+  high_level_summary: true
+  poem: false
+  review_status: true
+  collapse_walkthrough: true
+  auto_review:
+    enabled: true
+    drafts: false
+    base_branches:
+      - ".*"
+    ignore_title_patterns:
+      - "^chore: bump version"
+      - '^chore\(deps\)'
+    labels_auto_enabled: true
+  path_instructions:
+    - path: "src/app.ts"
+      instructions: >
+        Terminal wiring: raw-mode stdin keypress handling, the 50ms redraw interval,
+        and ANSI cursor clearing. The setInterval callback must stay a read of state,
+        not a place to mutate timers, or the display drifts from the model.
+    - path: "src/Timers.ts"
+      instructions: >
+        Owns the list of timers and the "current" pointer. Keep display/formatting out;
+        Timers never writes to stdout. Adding or restarting the current timer belongs
+        here so the invariant (exactly one current timer) has a single owner.
+    - path: "src/Timer.ts"
+      instructions: >
+        Single-timer state machine: start, pause, reset, elapsed milliseconds.
+        Elapsed time must come from a monotonic clock, not by accumulating ticks.
+    - path: "src/timeUtils.ts"
+      instructions: >
+        Pure duration formatting only. No side effects, no I/O, and callers depend on
+        it staying deterministic so tests can assert exact strings.
+    - path: "src/__tests__/**"
+      instructions: >
+        Jest + ts-jest. No fake timers unless the test asserts on real interval
+        behaviour; prefer asserting on state transitions. Timers must not be left
+        running or a test will hang CI.
+  tools:
+    eslint:
+      enabled: true
+  plugins: []
+chat:
+  auto_reply: true
+  persist: true
